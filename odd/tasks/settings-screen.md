@@ -66,5 +66,8 @@ Music volume (no music yet), gamepad, rebinding menu/system keys (Esc, R, V, G, 
   Not verified here (no synthetic keystrokes): live navigation, key capture and the fullscreen
   toggle — left for the user's play-test.
 
+- Play-test (user): settings screen confirmed working ("it works"); the run exited cleanly and
+  wrote a `[settings]` table to the real `save.toml`.
+
 ## Next step
-User play-test of navigation, rebinding and fullscreen.
+Done. Optional: push `main` and cut a v1.1.0 release.
