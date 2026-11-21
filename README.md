@@ -1,0 +1,67 @@
+# Hairpin Havoc
+
+A top-down pixel-art arcade racer for [Omarchy](https://omarchy.org), written in Rust with
+[Bevy](https://bevyengine.org). Drift to charge mini-turbos, burn nitro on the straights,
+grab lucky boxes, and fire gadgets at three rivals across four circuits — or chase your own
+ghost in Time Trial. Menus follow your active Omarchy theme.
+
+## Quick path
+
+```bash
+make install      # builds release and installs for the current user (~/.local)
+hairpin-havoc     # or launch "Hairpin Havoc" from the Omarchy app launcher
+```
+
+Requirements: Rust (stable), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommon`
+(all present on a standard Omarchy install). Remove with `make uninstall`.
+
+## Controls
+
+| Key | Action |
+|-----|--------|
+| `W` / `↑` | Throttle |
+| `S` / `↓` | Brake, then reverse |
+| `A` `D` / `←` `→` | Steer (last pressed wins) |
+| `Space` | Handbrake — start a drift |
+| `Shift` | Nitro |
+| `E` / `Q` | Use held item, otherwise your gadget |
+| `V` | Toggle wide camera |
+| `R` | Restart |
+| `G` | Toggle ghost (Time Trial) |
+| `Ctrl+V` | Load a friend's ghost code (Time Trial) |
+| `M` | Mute |
+| `Esc` | Back to menu |
+
+## How it plays
+
+| Mechanic | Summary |
+|----------|---------|
+| Drift charge | Hold a slide on tarmac to fill three tiers; releasing gives a 0.45 / 0.75 / 1.05 s boost. |
+| Nitro | A tank that refills while driving and drifting; fire it with `Shift`. |
+| Surfaces | Road → kerb (corners only) → gravel → grass → barrier. Each costs grip and speed. |
+| Routes | Every circuit has a risky shortcut and a boost lane with pads. |
+| Lucky boxes | Three stations per lap: Slick, Thumper or Jammer. |
+| Gadgets | Thumper, Slick, Static Burst, Battering Boost, All-Terrain, Phantom, Drift Surge. |
+| Garage | Earn credits by placing, drifting and setting PBs; buy cars, upgrades, paints, gadgets. |
+| Time Trial | Your best lap is saved as a ghost; share it as an `HH1:` code. |
+
+## Details
+
+| Topic | Decision |
+|-------|----------|
+| Saves | `$XDG_DATA_HOME/hairpin-havoc/` (`save.toml`, `pb-<track>.txt` ghost codes). |
+| Theme | UI colors come from `~/.local/state/omarchy/current/theme/colors.toml`. |
+| Window | Wayland app id `hairpin-havoc`, usable in Hyprland window rules. |
+| Art & audio | Procedural: sprites, tracks and engine sounds are generated in code. |
+| Font | Press Start 2P, SIL Open Font License (`assets/fonts/OFL.txt`). |
+
+## Development
+
+```bash
+make test         # unit tests (pure rules live in src/core)
+make lint         # clippy, warnings as errors
+HAIRPIN_AUTOSTART=race HAIRPIN_AUTODRIVE=1 cargo run   # skip menus, AI drives your car
+```
+
+`src/core/` holds the pure game rules (track geometry, physics, laps, AI, economy, ghosts,
+saves). `src/game/` holds the Bevy plugins that render, play audio and read input.

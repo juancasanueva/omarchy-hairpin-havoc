@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hairpin Havoc
+GenericName=Arcade Racer
+Comment=Top-down pixel-art arcade racing: drift, boost and bump your way to the flag
+Exec=hairpin-havoc
+Icon=hairpin-havoc
+Terminal=false
+Categories=Game;ArcadeGame;
+Keywords=racing;cars;drift;arcade;pixel;
+StartupWMClass=hairpin-havoc
