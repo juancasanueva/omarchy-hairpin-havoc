@@ -47,23 +47,24 @@ procedural audio.
 - [x] T6 Race flow: countdown, laps/sectors, standings, finish banner, results.
 - [x] T7 AI rivals: centerline follow, corner speed, overtaking lane, rubber band,
       stuck recovery, nitro/handbrake use.
-- [ ] T8 Lucky boxes + gadgets + items.
-- [ ] T9 HUD: position, laps, timers, PB delta, nitro, gadget pod, gear/speed,
+- [x] T8 Lucky boxes + gadgets + items.
+- [x] T9 HUD: position, laps, timers, PB delta, nitro, gadget pod, gear/speed,
       drift bar, toasts, minimap.
-- [ ] T10 Garage + economy + persistence: cars, upgrades, paints, gadget shop,
+- [x] T10 Garage + economy + persistence: cars, upgrades, paints, gadget shop,
       payouts, save file.
-- [ ] T11 Time trial + ghosts: recording, playback, PB, ghost codes, clipboard.
+- [x] T11 Time trial + ghosts: recording, playback, PB, ghost codes, clipboard.
 - [x] T12 Audio: procedural engine synth per car + SFX.
-- [ ] T13 Omarchy integration: .desktop entry, install target, README.
+- [x] T13 Omarchy integration: .desktop entry, install target, README.
 
 ## Progress
-- T1–T7, T12 done and committed on `feat/hairpin-havoc` (76 tests passing).
-- Verified visually: race renders (pixel canvas, kerbs, runoff, barriers), AI-driven
-  player car laps. Dev flags: `HAIRPIN_AUTOSTART=race|trial`, `HAIRPIN_AUTODRIVE=1`.
-- Fixes found by running: debug-mode overflow in AI seed (wrapping_mul); resizing a live
-  render-target image blanks it (swap in a new image instead).
-- In flight (parallel writers): T8 items/gadgets, T9 HUD+FX, T10 garage+title menu,
-  T11 time trial+ghosts.
+- All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
+- Checks (observed): `cargo test` 130 passed; `cargo clippy --all-targets -- -D warnings` clean;
+  integrated autodrive race screenshot shows HUD, minimap, items, FX, kerbs and props.
+- Decisions: gadgets disabled in Time Trial (comparable ghost times); clipboard via
+  `wl-copy`/`wl-paste` (bevy `system_clipboard` feature is off); `.atl/` untracked.
+- Risk assessment over the branch: medium, no review due (RDD entry rule not met).
+- Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 ## Next step
-Integrate the four units, play-test, T13 Omarchy integration.
+Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
+drift feel, AI pace per track.
