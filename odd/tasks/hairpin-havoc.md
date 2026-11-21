@@ -59,6 +59,11 @@ procedural audio.
       stacked rendering (rotate all slices, lift 1 px each, vertical squash), ghosts and
       phantom fade on stacks, stacked previews in menus, and drop-in slice strips exported
       from the SpriteCook sprite stack generator (`assets/cars/<car-key>.png` + optional toml).
+- [ ] T15 Stack quality pass: bake each car into N pre-rendered headings at load (symmetric
+      `(w-1)/2` rotation centre, rounded nearest sampling), one outline around the composite
+      (no per-slice outlines), single sprite per car picking the nearest heading frame,
+      `facing = "down"` default for imported strips, squash as one tunable constant, and
+      document `views_to_slices.py` (MIT) as an offline way to make slice strips.
 
 ## Progress
 - All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
