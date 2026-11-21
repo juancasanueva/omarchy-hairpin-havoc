@@ -3,6 +3,12 @@
 //! vertically and each slice is lifted one pixel above the previous one, so at
 //! the game's pixel scale the slices read as one solid 3D car.
 //!
+//! Stacks are baked on the CPU: each car is pre-rendered at `HEADINGS`
+//! headings when a race starts (one outline around each finished composite,
+//! never per slice), and drawn as a single sprite showing the frame nearest to
+//! its heading, plus a baked ground shadow. Whole cars are y-sorted by their
+//! ground point, so slices of two cars never interleave.
+//!
 //! Slices come from a procedural voxel model per body style, or from a slice
 //! strip dropped into `assets/cars/<car-key>.png` (see `assets/cars/README.md`).
 //! Cars point along +X at heading 0; world Y is up.
@@ -22,18 +28,28 @@ use crate::core::economy::PaintId;
 
 use super::pixel::WORLD_LAYER;
 
-/// Vertical squash of the whole stack (fakes the camera tilt).
+/// Vertical squash of the whole stack (fakes the camera tilt). Used by the
+/// race cars, the ghost, the menu previews, the shadows and the FX offsets.
+/// 0.88 was picked over 0.75: the track is drawn straight down, so a mild
+/// squash keeps cars' plan shape consistent with the unsquashed road, while
+/// 0.75 made sideways cars look stubby next to cars driving up/down.
 pub const SQUASH: f32 = 0.88;
-/// Screen pixels each slice sits above the previous one.
-pub const LIFT: f32 = 1.0;
-/// Pre-rendered headings used when a car is drawn translucent.
-pub const TURNS: usize = 64;
+/// Screen pixels each slice sits above the previous one (rounded per slice).
+pub const SPACING: f32 = 1.0;
+/// Headings baked per car. 128 keeps the nose of a 36 px car moving under one
+/// pixel per frame step while turning (64 jumps ~1.8 px); a car's frames take
+/// about 2 MB of GPU memory.
+pub const HEADINGS: usize = 128;
 /// Heading of the menu previews (nose toward the viewer, right side visible).
 pub const PREVIEW_ANGLE: f32 = -35.0 * std::f32::consts::PI / 180.0;
 
 const SHADOW_ALPHA: f32 = 0.3;
-const SHADOW_OFFSET: Vec2 = Vec2::new(3.0, -3.0);
-const PREVIEW_OUTLINE: [u8; 4] = [14, 14, 18, 255];
+/// Shadow offset from the car, in art pixels: 2 right, 3 down.
+const SHADOW_OFFSET: Vec2 = Vec2::new(2.0, -3.0);
+/// World z of every car shadow: above skids and slicks, below item boxes and cars.
+const SHADOW_Z: f32 = 14.0;
+/// Outline traced around each finished composite.
+const OUTLINE: [u8; 4] = [14, 14, 18, 255];
 
 // ---------------------------------------------------------------------------
 // Pixel grids
@@ -496,7 +512,6 @@ pub fn voxel_car(style: BodyStyle, body: [u8; 3], accent: [u8; 3]) -> Vec<Grid> 
     let mut slices = Vec::new();
     for z in 0..v.layers {
         let mut g = Grid::new(v.len as u32, v.wid as u32);
-        let mut emissive = vec![false; g.px.len()];
         for y in 0..v.wid {
             for x in 0..v.len {
                 let Some(m) = v.get(x, y, z) else { continue };
@@ -505,10 +520,8 @@ pub fn voxel_car(style: BodyStyle, body: [u8; 3], accent: [u8; 3]) -> Vec<Grid> 
                 // Grid rows run top to bottom; world +Y is the top row.
                 let row = (v.wid - 1 - y) as u32;
                 g.set(x as u32, row, c);
-                emissive[(row * g.width + x as u32) as usize] = matches!(m, Mat::Head | Mat::Tail | Mat::Hub);
             }
         }
-        outline(&mut g, &emissive, 0.72);
         slices.push(g);
     }
     while slices.last().is_some_and(Grid::is_empty) {
@@ -517,25 +530,6 @@ pub fn voxel_car(style: BodyStyle, body: [u8; 3], accent: [u8; 3]) -> Vec<Grid> 
     slices
 }
 
-/// Darkens opaque pixels that border transparency (except `keep` pixels).
-fn outline(g: &mut Grid, keep: &[bool], factor: f32) {
-    let src = g.clone();
-    for y in 0..g.height {
-        for x in 0..g.width {
-            let i = (y * g.width + x) as usize;
-            let p = src.px[i];
-            if p[3] == 0 || keep[i] {
-                continue;
-            }
-            let (xi, yi) = (x as i64, y as i64);
-            let edge = !(src.solid(xi - 1, yi) && src.solid(xi + 1, yi) && src.solid(xi, yi - 1) && src.solid(xi, yi + 1));
-            if edge {
-                g.px[i] = shade([p[0], p[1], p[2]], factor);
-                g.px[i][3] = p[3];
-            }
-        }
-    }
-}
 
 /// Procedural slices for `car` in `paint`.
 pub fn procedural_car(car: CarId, paint: PaintId) -> CarSlices {
@@ -554,12 +548,13 @@ pub fn car_slices(car: CarId, paint: PaintId) -> CarSlices {
 // Drop-in slice strips
 // ---------------------------------------------------------------------------
 
-/// Direction the car's nose points inside one slice image.
+/// Direction the car's nose points inside one slice image. Strips from
+/// common sprite-stack tools have the nose pointing down (+Y in the image).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Facing {
-    #[default]
     Up,
+    #[default]
     Down,
     Right,
     Left,
@@ -577,7 +572,7 @@ pub struct StripMeta {
 
 impl Default for StripMeta {
     fn default() -> Self {
-        Self { slices: None, facing: Facing::Up, scale: 1.0 }
+        Self { slices: None, facing: Facing::Down, scale: 1.0 }
     }
 }
 
@@ -707,70 +702,111 @@ pub fn load_override(key: &str) -> Option<CarSlices> {
 }
 
 // ---------------------------------------------------------------------------
-// CPU compositing (menu previews, translucent cars)
+// CPU compositing
 // ---------------------------------------------------------------------------
 
-/// Size of a composited stack and where the ground center lands in it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PreviewLayout {
-    pub width: u32,
-    pub height: u32,
-    /// Ground center, in pixels from the left and from the top.
-    pub cx: f32,
-    pub cy: f32,
+/// Screen pixels slice `i` sits above the ground slice (whole pixels only, so
+/// slices never smear across rows).
+pub fn lift(i: usize, spacing: f32) -> i32 {
+    (i as f32 * spacing).round() as i32
 }
 
-/// The layout fits every heading, so rotating a preview never resizes it.
-pub fn preview_layout(w: u32, h: u32, n: usize, squash: f32, lift: f32) -> PreviewLayout {
-    let diag = ((w * w + h * h) as f32).sqrt().ceil();
-    let rise = n.saturating_sub(1) as f32 * lift;
-    let ry = (diag * squash / 2.0).ceil();
-    // One pixel margin on each side for the outline.
-    let width = diag as u32 + 2;
-    let height = (2.0 * ry + rise).ceil() as u32 + 2;
-    PreviewLayout { width, height, cx: width as f32 / 2.0, cy: 1.0 + rise.ceil() + ry }
+/// Fixed canvas that fits a stack of `count` slices of `w` x `h` px at every
+/// heading. The ground point sits exactly at the canvas centre and both sides
+/// are even, so the canvas centre falls on a pixel corner (like the
+/// `(w-1)/2` centre of even-sized slices) and nothing moves between headings.
+/// One pixel of margin on every side leaves room for the outline.
+pub fn stack_canvas(w: u32, h: u32, count: usize, squash: f32, spacing: f32) -> UVec2 {
+    let r = ((w * w + h * h) as f32).sqrt() / 2.0;
+    let rise = lift(count.saturating_sub(1), spacing).max(0) as f32;
+    let half_w = r.ceil() as u32 + 1;
+    let half_h = (r * squash + rise).ceil() as u32 + 1;
+    UVec2::new(2 * half_w, 2 * half_h)
 }
 
-/// Composites the stack at `angle` (radians, CCW), bottom slice first, with a
-/// dark 1 px silhouette outline.
-pub fn render_stack_preview(slices: &[Grid], angle: f32, squash: f32, lift: f32) -> Grid {
-    let Some(first) = slices.first() else { return Grid::new(1, 1) };
-    let (w, h) = (first.width, first.height);
-    let lay = preview_layout(w, h, slices.len(), squash, lift);
-    let mut out = Grid::new(lay.width, lay.height);
-    let (sin, cos) = (-angle).sin_cos();
-    for (i, s) in slices.iter().enumerate() {
-        for oy in 0..lay.height {
-            for ox in 0..lay.width {
-                let sx = ox as f32 + 0.5 - lay.cx;
-                // Screen offset from this slice's lifted center, unsquashed.
-                let sy = (lay.cy - (oy as f32 + 0.5) - i as f32 * lift) / squash;
-                // Inverse rotation back into slice space.
-                let lx = sx * cos - sy * sin;
-                let ly = sx * sin + sy * cos;
-                let col = (lx + w as f32 / 2.0).floor();
-                let row = (h as f32 / 2.0 - ly).floor();
-                if col < 0.0 || row < 0.0 || col >= w as f32 || row >= h as f32 {
+/// Composites the stack at `angle` (radians, CCW, 0 = nose along +X) into
+/// `canvas`, without an outline. Every slice is rotated about its symmetric
+/// centre `((w-1)/2, (h-1)/2)`, squashed vertically and lifted
+/// `lift(i, spacing)` px; each canvas pixel inverse-maps into the slices
+/// (rounded nearest sampling), top slice first, until it is opaque.
+///
+/// Odd-sized slices are sampled as if padded with one transparent column at
+/// the tail (left) and/or one row at the bottom: an even-sized slice rotates
+/// about a pixel corner like the even canvas, so rotated pixels land on whole
+/// canvas pixels instead of rounding ties (no wobble between headings).
+pub fn composite_stack(slices: &[Grid], angle: f32, squash: f32, spacing: f32, canvas: UVec2) -> Grid {
+    let mut out = Grid::new(canvas.x, canvas.y);
+    let Some(first) = slices.first() else { return out };
+    let pad_x = (first.width % 2) as f32;
+    let (cx, cy) = (
+        (first.width as f32 + pad_x - 1.0) * 0.5,
+        (first.height as f32 + (first.height % 2) as f32 - 1.0) * 0.5,
+    );
+    let (gx, gy) = ((canvas.x as f32 - 1.0) * 0.5, (canvas.y as f32 - 1.0) * 0.5);
+    let (sin, cos) = angle.sin_cos();
+    let lifts: Vec<f32> = (0..slices.len()).map(|i| lift(i, spacing) as f32).collect();
+    for oy in 0..canvas.y {
+        // Screen offset from the ground point, +Y up.
+        let dy = gy - oy as f32;
+        for ox in 0..canvas.x {
+            let u = ox as f32 - gx;
+            let mut acc = [0u8; 4];
+            for (s, &l) in slices.iter().zip(&lifts).rev() {
+                // Undo the lift and the squash, then the rotation.
+                let v = (dy - l) / squash;
+                let lx = u * cos + v * sin;
+                let ly = v * cos - u * sin;
+                let col = (cx + lx).round() - pad_x;
+                let row = (cy - ly).round();
+                if col < 0.0 || row < 0.0 || col >= s.width as f32 || row >= s.height as f32 {
                     continue;
                 }
                 let p = s.get(col as u32, row as u32);
-                if p[3] > 0 {
-                    out.set(ox, oy, blend(out.get(ox, oy), p));
+                if p[3] == 0 {
+                    continue;
+                }
+                // `acc` is in front of `p`.
+                acc = blend(p, acc);
+                if acc[3] == 255 {
+                    break;
                 }
             }
+            out.set(ox, oy, acc);
         }
     }
-    let src = out.clone();
-    for y in 0..out.height {
-        for x in 0..out.width {
+    out
+}
+
+/// Traces a 1 px outline around the opaque area: every transparent pixel next
+/// to an opaque one (4-neighbourhood) becomes `color`. Run it once on the
+/// finished composite, never per slice, so no seams appear inside the body.
+pub fn outline(g: &Grid, color: [u8; 4]) -> Grid {
+    let mut out = g.clone();
+    for y in 0..g.height {
+        for x in 0..g.width {
             let (xi, yi) = (x as i64, y as i64);
-            let near = src.solid(xi - 1, yi) || src.solid(xi + 1, yi) || src.solid(xi, yi - 1) || src.solid(xi, yi + 1);
-            if src.get(x, y)[3] == 0 && near {
-                out.set(x, y, PREVIEW_OUTLINE);
+            let near = g.solid(xi - 1, yi) || g.solid(xi + 1, yi) || g.solid(xi, yi - 1) || g.solid(xi, yi + 1);
+            if g.get(x, y)[3] == 0 && near {
+                out.set(x, y, color);
             }
         }
     }
     out
+}
+
+/// The finished stack at `angle`: composite plus one outline, on the car's
+/// fixed canvas (see [`stack_canvas`]).
+pub fn render_stack(slices: &[Grid], angle: f32, squash: f32, spacing: f32) -> Grid {
+    let Some(first) = slices.first() else { return Grid::new(2, 2) };
+    let canvas = stack_canvas(first.width, first.height, slices.len(), squash, spacing);
+    outline(&composite_stack(slices, angle, squash, spacing, canvas), OUTLINE)
+}
+
+/// Ground shadow at `angle`: the white footprint, rotated and squashed like
+/// the ground slice, on a canvas centred on the ground point.
+pub fn render_shadow(footprint: &Grid, angle: f32, squash: f32) -> Grid {
+    let canvas = stack_canvas(footprint.width, footprint.height, 1, squash, 0.0);
+    composite_stack(std::slice::from_ref(footprint), angle, squash, 0.0, canvas)
 }
 
 fn blend(dst: [u8; 4], src: [u8; 4]) -> [u8; 4] {
@@ -785,54 +821,59 @@ fn blend(dst: [u8; 4], src: [u8; 4]) -> [u8; 4] {
 
 /// Menu preview image of `car` at `angle`, keeping CPU data so it can be re-rendered.
 pub fn preview_image(car: &CarSlices, angle: f32) -> Image {
-    render_stack_preview(&car.slices, angle, SQUASH, LIFT)
-        .to_image(RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
+    render_stack(&car.slices, angle, SQUASH, SPACING).to_image(RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
 }
 
-/// Index into the pre-rendered headings for `heading`.
-pub fn turn_index(heading: f32, turns: usize) -> usize {
-    ((heading / TAU * turns as f32).round() as i64).rem_euclid(turns as i64) as usize
+/// Angle of baked frame `i` out of `n`.
+pub fn frame_angle(i: usize, n: usize) -> f32 {
+    i as f32 / n as f32 * TAU
+}
+
+/// Baked frame closest to `heading`: `round(heading / TAU * n) mod n`.
+pub fn frame_index(heading: f32, n: usize) -> usize {
+    ((heading / TAU * n as f32).round() as i64).rem_euclid(n as i64) as usize
 }
 
 // ---------------------------------------------------------------------------
 // ECS
 // ---------------------------------------------------------------------------
 
-/// GPU images of one car, ready to spawn as a stack.
+/// Baked GPU frames of one car: `HEADINGS` stack images and matching ground
+/// shadows. The handles are strong, so the images are freed once the last
+/// car (or `StackArt`) using them is gone.
 #[derive(Clone)]
 pub struct StackArt {
-    slices: Vec<Handle<Image>>,
-    shadow: Handle<Image>,
-    turns: Vec<Handle<Image>>,
-    /// Offset from the ground center to the center of a turn image (art px).
-    turn_offset: Vec2,
+    frames: Vec<Handle<Image>>,
+    shadows: Vec<Handle<Image>>,
     scale: f32,
     half_length: f32,
+    height: f32,
 }
 
 impl StackArt {
     pub fn new(car: &CarSlices, images: &mut Assets<Image>) -> Self {
         let usage = RenderAssetUsages::RENDER_WORLD;
-        let lay = preview_layout(car.width, car.height, car.slices.len(), SQUASH, LIFT);
+        let footprint = car.footprint();
+        let (frames, shadows) = (0..HEADINGS)
+            .map(|i| {
+                let angle = frame_angle(i, HEADINGS);
+                let body = render_stack(&car.slices, angle, SQUASH, SPACING).to_image(usage);
+                let shadow = render_shadow(&footprint, angle, SQUASH).to_image(usage);
+                (images.add(body), images.add(shadow))
+            })
+            .unzip();
         Self {
-            slices: car.slices.iter().map(|g| images.add(g.to_image(usage))).collect(),
-            shadow: images.add(car.footprint().to_image(usage)),
-            turns: (0..TURNS)
-                .map(|i| {
-                    let angle = i as f32 / TURNS as f32 * TAU;
-                    images.add(render_stack_preview(&car.slices, angle, SQUASH, LIFT).to_image(usage))
-                })
-                .collect(),
-            turn_offset: Vec2::new(lay.width as f32 / 2.0 - lay.cx, lay.cy - lay.height as f32 / 2.0),
+            frames,
+            shadows,
             scale: car.scale,
             half_length: car.width as f32 * car.scale / 2.0,
+            height: car.slices.len() as f32 * SPACING * car.scale,
         }
     }
 }
 
-/// Where a stacked car points and how opaque it is. Alpha below 1 draws the
-/// pre-rendered composite instead of the slices (overlapping translucent
-/// slices would otherwise add up to an opaque core).
+/// Where a stacked car points and how opaque it is (alpha applies to the one
+/// baked sprite, so translucent cars never show their inner slices).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct StackPose {
     pub heading: f32,
@@ -845,13 +886,13 @@ impl Default for StackPose {
     }
 }
 
-/// Child entities of a stacked car; lives on the car's root entity.
+/// The car sprite and its shadow; lives on the car's root entity.
 #[derive(Component)]
 pub struct CarStack {
-    slices: Vec<Entity>,
+    body: Entity,
     shadow: Entity,
-    flat: Entity,
-    turns: Vec<Handle<Image>>,
+    frames: Vec<Handle<Image>>,
+    shadows: Vec<Handle<Image>>,
     /// Distance from the center to the tail, in world px.
     pub half_length: f32,
     /// Screen height of the stack, in px.
@@ -861,48 +902,48 @@ pub struct CarStack {
 #[derive(Component)]
 struct StackPart;
 
-/// Spawns the stack as children of `root` (which keeps translation only) and
-/// inserts `CarStack` and `pose` on it. Children get `WORLD_LAYER`.
+/// Spawns the car sprite and its shadow as children of `root` (which keeps
+/// translation only) and inserts `CarStack` and `pose` on it. Children get
+/// `WORLD_LAYER`.
 pub fn spawn_stack(commands: &mut Commands, root: Entity, art: &StackArt, pose: StackPose) {
     let s = art.scale;
-    let mut slices = Vec::with_capacity(art.slices.len());
+    let i = frame_index(pose.heading, art.frames.len());
+    let scale = Vec3::new(s, s, 1.0);
+    let mut body = Entity::PLACEHOLDER;
     let mut shadow = Entity::PLACEHOLDER;
-    let mut flat = Entity::PLACEHOLDER;
     commands.entity(root).with_children(|c| {
-        c.spawn((
-            Transform::from_scale(Vec3::new(s, SQUASH * s, 1.0)),
-            Visibility::default(),
-            WORLD_LAYER,
-        ))
-        .with_children(|n| {
-            shadow = n
-                .spawn((
-                    StackPart,
-                    Sprite { image: art.shadow.clone(), color: Color::BLACK.with_alpha(SHADOW_ALPHA), ..default() },
-                    Transform::from_xyz(SHADOW_OFFSET.x / s, SHADOW_OFFSET.y / (SQUASH * s), -0.002),
-                    WORLD_LAYER,
-                ))
-                .id();
-            for (i, img) in art.slices.iter().enumerate() {
-                let tf = Transform::from_xyz(0.0, i as f32 * LIFT / SQUASH, i as f32 * 0.001);
-                slices.push(n.spawn((StackPart, Sprite::from_image(img.clone()), tf, WORLD_LAYER)).id());
-            }
-        });
-        flat = c
+        shadow = c
             .spawn((
                 StackPart,
-                Sprite::from_image(art.turns[0].clone()),
-                Transform::from_translation((art.turn_offset * s).extend(0.0)).with_scale(Vec3::new(s, s, 1.0)),
-                Visibility::Hidden,
+                Sprite { image: art.shadows[i].clone(), color: shadow_color(pose.alpha), ..default() },
+                Transform::from_translation((SHADOW_OFFSET * s).extend(-1.0)).with_scale(scale),
+                WORLD_LAYER,
+            ))
+            .id();
+        body = c
+            .spawn((
+                StackPart,
+                Sprite { image: art.frames[i].clone(), color: Color::WHITE.with_alpha(pose.alpha), ..default() },
+                Transform::from_scale(scale),
                 WORLD_LAYER,
             ))
             .id();
     });
-    let height = art.slices.len() as f32 * LIFT * s;
     commands.entity(root).insert((
-        CarStack { slices, shadow, flat, turns: art.turns.clone(), half_length: art.half_length, height },
+        CarStack {
+            body,
+            shadow,
+            frames: art.frames.clone(),
+            shadows: art.shadows.clone(),
+            half_length: art.half_length,
+            height: art.height,
+        },
         pose,
     ));
+}
+
+fn shadow_color(alpha: f32) -> Color {
+    Color::BLACK.with_alpha(SHADOW_ALPHA * alpha)
 }
 
 pub struct StackPlugin;
@@ -913,40 +954,34 @@ impl Plugin for StackPlugin {
     }
 }
 
-type PartItems<'w, 's> =
-    Query<'w, 's, (&'static mut Transform, &'static mut Sprite, &'static mut Visibility), With<StackPart>>;
+type Stacks<'w, 's> =
+    Query<'w, 's, (&'static StackPose, &'static CarStack, &'static Transform), Without<StackPart>>;
+type Parts<'w, 's> = Query<'w, 's, (&'static mut Transform, &'static mut Sprite), With<StackPart>>;
 
-/// Stacks whose pose changed or that were just spawned.
-type ChangedStacks<'w, 's> =
-    Query<'w, 's, (&'static StackPose, &'static CarStack), Or<(Changed<StackPose>, Added<CarStack>)>>;
-
-fn apply_pose(
-    stacks: ChangedStacks,
-    mut parts: PartItems,
-) {
-    for (pose, stack) in &stacks {
-        let rot = Quat::from_rotation_z(pose.heading);
-        let solid = pose.alpha >= 0.999;
-        for &e in &stack.slices {
-            if let Ok((mut tf, _, mut vis)) = parts.get_mut(e) {
-                tf.rotation = rot;
-                vis.set_if_neq(if solid { Visibility::Inherited } else { Visibility::Hidden });
+/// Picks the baked frame for each car's heading, applies its alpha and keeps
+/// every shadow on one ground layer below all cars.
+fn apply_pose(stacks: Stacks, mut parts: Parts) {
+    for (pose, stack, root) in &stacks {
+        let i = frame_index(pose.heading, stack.frames.len());
+        if let Ok((_, mut sprite)) = parts.get_mut(stack.body) {
+            set_frame(&mut sprite, &stack.frames[i], Color::WHITE.with_alpha(pose.alpha));
+        }
+        if let Ok((mut tf, mut sprite)) = parts.get_mut(stack.shadow) {
+            set_frame(&mut sprite, &stack.shadows[i], shadow_color(pose.alpha));
+            let z = SHADOW_Z - root.translation.z;
+            if tf.translation.z != z {
+                tf.translation.z = z;
             }
         }
-        if let Ok((mut tf, mut sprite, _)) = parts.get_mut(stack.shadow) {
-            tf.rotation = rot;
-            sprite.color.set_alpha(SHADOW_ALPHA * pose.alpha);
-        }
-        if let Ok((_, mut sprite, mut vis)) = parts.get_mut(stack.flat) {
-            vis.set_if_neq(if solid { Visibility::Hidden } else { Visibility::Inherited });
-            if !solid {
-                let img = &stack.turns[turn_index(pose.heading, stack.turns.len())];
-                if sprite.image != *img {
-                    sprite.image = img.clone();
-                }
-                sprite.color = Color::WHITE.with_alpha(pose.alpha);
-            }
-        }
+    }
+}
+
+fn set_frame(sprite: &mut Mut<Sprite>, image: &Handle<Image>, color: Color) {
+    if sprite.image != *image {
+        sprite.image = image.clone();
+    }
+    if sprite.color != color {
+        sprite.color = color;
     }
 }
 
@@ -1003,15 +1038,14 @@ mod tests {
     }
 
     #[test]
-    fn slices_have_a_darker_outline_and_bright_lights() {
+    fn slices_have_bright_lights_and_no_per_slice_outline() {
         let body = [200, 100, 50];
         let slices = voxel_car(BodyStyle::Coupe, body, [240, 240, 240]);
-        let top = slices.iter().rev().find(|s| opaque(s) > 20).unwrap();
-        // Find a pixel on the left edge of a row; it must be darker than the body top color.
-        let row = top.height / 2;
-        let x = (0..top.width).find(|&x| top.get(x, row)[3] > 0).unwrap();
-        let edge = top.get(x, row);
-        assert!(edge[0] < shade(body, 1.12)[0]);
+        // A low body slice: its leftmost pixel matches its neighbour (no darkened rim).
+        let s = &slices[1];
+        let row = s.height / 2;
+        let x = (0..s.width).find(|&x| s.get(x, row)[3] > 0).unwrap();
+        assert_eq!(s.get(x, row), s.get(x + 1, row));
         // Headlights sit at the nose.
         let lit = slices.iter().any(|s| (0..s.height).any(|y| s.get(s.width - 1, y) == [255, 244, 200, 255]));
         assert!(lit);
@@ -1066,7 +1100,8 @@ mod tests {
         slice.set(0, 0, [1, 2, 3, 255]);
         slice.set(1, 0, [1, 2, 3, 255]);
         slice.set(0, 3, [7, 7, 7, 255]);
-        let car = strip_to_car(&slice, StripMeta { slices: Some(1), ..StripMeta::default() }).unwrap();
+        let meta = StripMeta { slices: Some(1), facing: Facing::Up, scale: 1.0 };
+        let car = strip_to_car(&slice, meta).unwrap();
         assert_eq!((car.width, car.height), (4, 2));
         let s = &car.slices[0];
         // The nose ends up in the rightmost column.
@@ -1076,6 +1111,23 @@ mod tests {
         assert_eq!(right[0], slice);
         let left = normalize(vec![slice.clone()], Facing::Left);
         assert_eq!(left[0], slice.rotate_180());
+    }
+
+    #[test]
+    fn strips_face_down_by_default() {
+        assert_eq!(StripMeta::default().facing, Facing::Down);
+        assert_eq!(parse_meta("").unwrap().facing, Facing::Down);
+        // A 2x4 slice whose nose (marked) is the bottom row; its left column is
+        // the car's left side (viewed from above, nose toward the viewer's bottom).
+        let mut slice = Grid::new(2, 4);
+        slice.set(0, 3, [1, 2, 3, 255]);
+        slice.set(1, 3, [4, 5, 6, 255]);
+        let car = strip_to_car(&slice, StripMeta { slices: Some(1), ..StripMeta::default() }).unwrap();
+        assert_eq!((car.width, car.height), (4, 2));
+        let s = &car.slices[0];
+        // Nose in the rightmost column; the car's right side (image left) ends up at the bottom (-Y).
+        assert_eq!(s.get(3, 1), [1, 2, 3, 255]);
+        assert_eq!(s.get(3, 0), [4, 5, 6, 255]);
     }
 
     #[test]
@@ -1110,50 +1162,244 @@ mod tests {
         assert_eq!(override_dirs(Some("rel".into()), None, None, None), Vec::<PathBuf>::new());
     }
 
-    #[test]
-    fn preview_layout_fits_every_heading() {
-        let car = procedural_car(CarId::Baron, PaintId::Factory);
-        let first = render_stack_preview(&car.slices, 0.0, SQUASH, LIFT);
-        for k in 0..16 {
-            let g = render_stack_preview(&car.slices, k as f32 * TAU / 16.0, SQUASH, LIFT);
-            assert_eq!((g.width, g.height), (first.width, first.height));
-            // Nothing touches the border except the outline ring.
+    /// Solid `w` x `h` slices, one color each.
+    fn solid_slices(w: u32, h: u32, colors: &[[u8; 4]]) -> Vec<Grid> {
+        colors.iter().map(|&c| Grid { width: w, height: h, px: vec![c; (w * h) as usize] }).collect()
+    }
+
+    /// Bounding box (x0, y0, x1, y1) of the opaque pixels, inclusive.
+    fn bbox(g: &Grid) -> (u32, u32, u32, u32) {
+        let mut b = (u32::MAX, u32::MAX, 0, 0);
+        for y in 0..g.height {
             for x in 0..g.width {
-                for y in [0, g.height - 1] {
-                    let p = g.get(x, y);
-                    assert!(p[3] == 0 || p == PREVIEW_OUTLINE);
+                if g.get(x, y)[3] > 0 {
+                    b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
                 }
+            }
+        }
+        b
+    }
+
+    const RGB: [[u8; 4]; 3] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+
+    #[test]
+    fn straight_down_view_is_one_slice_wide_and_count_taller() {
+        for (w, h) in [(6, 4), (7, 3), (30, 16)] {
+            let slices = solid_slices(w, h, &RGB);
+            let canvas = stack_canvas(w, h, slices.len(), 1.0, 1.0);
+            let g = composite_stack(&slices, 0.0, 1.0, 1.0, canvas);
+            let (x0, y0, x1, y1) = bbox(&g);
+            assert_eq!(x1 - x0 + 1, w, "{w}x{h} width");
+            assert_eq!(y1 - y0 + 1, h + slices.len() as u32 - 1, "{w}x{h} height");
+            // The top slice covers the highest rows, the ground slice peeks out at the bottom.
+            assert_eq!(g.get(x0, y0), RGB[2]);
+            assert_eq!(g.get(x0, y1), RGB[0]);
+            assert!((0..g.width).all(|x| g.get(x, y1)[3] == 0 || g.get(x, y1) == RGB[0]));
+        }
+    }
+
+    #[test]
+    fn zero_spacing_shows_only_the_top_slice() {
+        let slices = solid_slices(6, 4, &RGB);
+        let canvas = stack_canvas(6, 4, 3, 1.0, 0.0);
+        let g = composite_stack(&slices, 0.0, 1.0, 0.0, canvas);
+        assert_eq!(opaque(&g), 24);
+        assert!(g.px.iter().all(|p| p[3] == 0 || *p == RGB[2]));
+    }
+
+    #[test]
+    fn symmetric_even_slices_do_not_wobble_when_turned() {
+        // A 180-degree symmetric even-sized slice: a frame with a centred dot pair.
+        let mut s = Grid::new(6, 4);
+        for (x, y) in [(0, 0), (5, 3), (1, 1), (4, 2), (2, 1), (3, 2)] {
+            s.set(x, y, [200, 10, 10, 255]);
+        }
+        assert_eq!(s.rotate_180(), s);
+        let slices = vec![s.clone(), s];
+        let canvas = stack_canvas(6, 4, 2, 1.0, 1.0);
+        let a = composite_stack(&slices, 0.0, 1.0, 1.0, canvas);
+        let b = composite_stack(&slices, std::f32::consts::PI, 1.0, 1.0, canvas);
+        assert_eq!(a, b);
+        // A solid even square looks the same at every quarter turn.
+        let sq = solid_slices(4, 4, &RGB);
+        let canvas = stack_canvas(4, 4, 3, 1.0, 1.0);
+        let base = composite_stack(&sq, 0.0, 1.0, 1.0, canvas);
+        for k in 1..4 {
+            let g = composite_stack(&sq, k as f32 * TAU / 4.0, 1.0, 1.0, canvas);
+            assert_eq!(g, base, "quarter turn {k}");
+        }
+    }
+
+    #[test]
+    fn outline_only_rings_the_composite() {
+        let slices = solid_slices(10, 6, &RGB);
+        for k in 0..16 {
+            let angle = k as f32 * TAU / 16.0;
+            let canvas = stack_canvas(10, 6, 3, SQUASH, SPACING);
+            let plain = composite_stack(&slices, angle, SQUASH, SPACING, canvas);
+            let g = render_stack(&slices, angle, SQUASH, SPACING);
+            assert_eq!((g.width, g.height), (canvas.x, canvas.y));
+            for (p, q) in g.px.iter().zip(&plain.px) {
+                if q[3] > 0 {
+                    // Inside the body nothing changed: no dark speckle or seams.
+                    assert_eq!(p, q, "heading {k}");
+                    assert_ne!(*p, OUTLINE);
+                } else if p[3] > 0 {
+                    assert_eq!(*p, OUTLINE);
+                }
+            }
+            // The body is ringed by the outline.
+            assert!(g.px.contains(&OUTLINE));
+        }
+    }
+
+    #[test]
+    fn canvas_fits_every_heading_and_stays_fixed() {
+        let car = procedural_car(CarId::Baron, PaintId::Factory);
+        let first = render_stack(&car.slices, 0.0, SQUASH, SPACING);
+        assert!(first.width.is_multiple_of(2) && first.height.is_multiple_of(2));
+        for k in 0..32 {
+            let g = render_stack(&car.slices, frame_angle(k, 32), SQUASH, SPACING);
+            assert_eq!((g.width, g.height), (first.width, first.height));
+            // Nothing touches the border: the outline always fits.
+            for x in 0..g.width {
+                assert_eq!(g.get(x, 0)[3], 0);
+                assert_eq!(g.get(x, g.height - 1)[3], 0);
+            }
+            for y in 0..g.height {
+                assert_eq!(g.get(0, y)[3], 0);
+                assert_eq!(g.get(g.width - 1, y)[3], 0);
             }
         }
     }
 
     #[test]
-    fn preview_stacks_upward_and_squashes() {
-        // Three 4x2 slices, each a solid color; the top slice must be highest.
-        let colors = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
-        let slices: Vec<Grid> = colors
-            .iter()
-            .map(|&c| Grid { width: 4, height: 2, px: vec![c; 8] })
-            .collect();
-        let g = render_stack_preview(&slices, 0.0, 1.0, 1.0);
-        let rows_with = |c: [u8; 4]| -> Vec<u32> {
-            (0..g.height).filter(|&y| (0..g.width).any(|x| g.get(x, y) == c)).collect()
-        };
-        let red = rows_with(colors[0]);
-        let blue = rows_with(colors[2]);
-        // Bottom slice peeks out below; top slice covers the highest rows.
-        assert_eq!(red.len(), 1);
-        assert_eq!(blue.len(), 2);
-        assert_eq!(red.last().unwrap() - blue.last().unwrap(), 2);
-        let lay = preview_layout(4, 2, 3, 1.0, 1.0);
-        assert_eq!((g.width, g.height), (lay.width, lay.height));
+    fn shadow_lines_up_with_the_ground_slice() {
+        let slices = solid_slices(8, 4, &RGB);
+        let car = CarSlices::new(slices, 1.0);
+        for k in 0..8 {
+            let angle = frame_angle(k, 8);
+            let shadow = render_shadow(&car.footprint(), angle, SQUASH);
+            let canvas = stack_canvas(8, 4, 3, SQUASH, SPACING);
+            let ground = composite_stack(&car.slices[..1], angle, SQUASH, SPACING, canvas);
+            // Both canvases are centred on the ground point; compare centred boxes.
+            let (s, g) = (bbox(&shadow), bbox(&ground));
+            let (dx, dy) = ((canvas.x - shadow.width) / 2, (canvas.y - shadow.height) / 2);
+            assert_eq!((s.0 + dx, s.1 + dy, s.2 + dx, s.3 + dy), g, "heading {k}");
+        }
     }
 
     #[test]
-    fn turn_index_wraps() {
-        assert_eq!(turn_index(0.0, 64), 0);
-        assert_eq!(turn_index(TAU, 64), 0);
-        assert_eq!(turn_index(-TAU / 64.0, 64), 63);
-        assert_eq!(turn_index(TAU / 4.0, 64), 16);
+    fn headings_point_the_nose_the_right_way() {
+        let car = procedural_car(CarId::Pebble, PaintId::Factory);
+        let (head, tail) = ([255, 244, 200, 255], [228, 50, 50, 255]);
+        // Mean light position relative to the canvas centre (+x right, +y down).
+        let lights = |angle: f32, color: [u8; 4]| -> Vec2 {
+            let g = render_stack(&car.slices, angle, SQUASH, SPACING);
+            let pts: Vec<Vec2> = (0..g.height)
+                .flat_map(|y| (0..g.width).map(move |x| (x, y)))
+                .filter(|&(x, y)| g.get(x, y) == color)
+                .map(|(x, y)| Vec2::new(x as f32 - g.width as f32 / 2.0, y as f32 - g.height as f32 / 2.0))
+                .collect();
+            assert!(!pts.is_empty(), "no headlights at {angle}");
+            pts.iter().sum::<Vec2>() / pts.len() as f32
+        };
+        assert!(lights(0.0, head).x > 8.0);
+        assert!(lights(0.0, tail).x < -8.0);
+        assert!(lights(std::f32::consts::PI, head).x < -8.0);
+        // Nose up (world +Y): the tail lights face the viewer, low in the image.
+        assert!(lights(std::f32::consts::FRAC_PI_2, tail).y > 4.0);
+        assert!(lights(-std::f32::consts::FRAC_PI_2, head).y > 4.0);
+    }
+
+    #[test]
+    fn frame_index_rounds_and_wraps() {
+        assert_eq!(frame_index(0.0, 64), 0);
+        assert_eq!(frame_index(TAU, 64), 0);
+        assert_eq!(frame_index(-TAU / 64.0, 64), 63);
+        assert_eq!(frame_index(TAU / 4.0, 64), 16);
+        assert_eq!(frame_index(-TAU / 4.0, 128), 96);
+        assert_eq!(frame_index(TAU * 0.49 / 64.0, 64), 0);
+        assert_eq!(frame_index(TAU * 0.51 / 64.0, 64), 1);
+        assert_eq!(frame_index(-3.0 * TAU - TAU / 8.0, 8), 7);
+        assert_eq!(frame_index(5.0 * TAU + TAU / 8.0, 8), 1);
+        for i in 0..HEADINGS {
+            assert_eq!(frame_index(frame_angle(i, HEADINGS), HEADINGS), i);
+        }
+    }
+
+    #[test]
+    fn lift_is_whole_pixels() {
+        assert_eq!(lift(0, 1.0), 0);
+        assert_eq!(lift(3, 1.0), 3);
+        assert_eq!(lift(3, 0.5), 2);
+        assert_eq!(lift(5, 0.0), 0);
+    }
+
+    /// Writes a contact sheet of every car at 8 headings and two squash values
+    /// (rows: car x squash; cell backgrounds cycle the track road colors) as a
+    /// PAM image. Run with
+    /// `STACK_SHEET=/path/sheet.pam cargo test contact_sheet -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn contact_sheet() {
+        use crate::core::tracks::TrackId;
+        let Some(path) = std::env::var_os("STACK_SHEET") else { return };
+        let squashes = [0.75, 0.88];
+        let cars: Vec<CarSlices> = CarId::ALL.iter().map(|&c| procedural_car(c, PaintId::Factory)).collect();
+        let cell = cars.iter().fold(UVec2::ZERO, |m, c| {
+            m.max(stack_canvas(c.width, c.height, c.slices.len(), 0.88, SPACING) + UVec2::new(0, 8))
+        });
+        let (cols, rows) = (8u32, (cars.len() * squashes.len()) as u32);
+        let mut sheet = Grid::new(cell.x * cols, cell.y * rows);
+        for (ci, car) in cars.iter().enumerate() {
+            let road = crate::game::theme::world_theme(TrackId::ALL[ci % 4]).road.to_srgba();
+            let bg = [road.red, road.green, road.blue].map(|v| (v * 255.0).round() as u8);
+            for (si, &sq) in squashes.iter().enumerate() {
+                let row = (ci * squashes.len() + si) as u32;
+                for col in 0..cols {
+                    let mut shadow = render_shadow(&car.footprint(), frame_angle(col as usize, 8), sq);
+                    shadow.px.iter_mut().for_each(|p| *p = if p[3] > 0 { [0, 0, 0, 77] } else { *p });
+                    let g = render_stack(&car.slices, frame_angle(col as usize, 8), sq, SPACING);
+                    let (ox, oy) = (col * cell.x, row * cell.y);
+                    for y in 0..cell.y {
+                        for x in 0..cell.x {
+                            sheet.set(ox + x, oy + y, [bg[0], bg[1], bg[2], 255]);
+                        }
+                    }
+                    // Centre both canvases on the cell centre; shadow offset 2 right, 3 down.
+                    let place = |sheet: &mut Grid, img: &Grid, dx: u32, dy: u32| {
+                        let (x0, y0) = (ox + (cell.x - img.width) / 2 + dx, oy + (cell.y - img.height) / 2 + dy);
+                        for y in 0..img.height {
+                            for x in 0..img.width {
+                                let p = img.get(x, y);
+                                if p[3] > 0 {
+                                    let d = sheet.get(x0 + x, y0 + y);
+                                    sheet.set(x0 + x, y0 + y, blend(d, p));
+                                }
+                            }
+                        }
+                    };
+                    place(&mut sheet, &shadow, 2, 3);
+                    place(&mut sheet, &g, 0, 0);
+                }
+            }
+        }
+        let mut bytes = format!(
+            "P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",
+            sheet.width, sheet.height
+        )
+        .into_bytes();
+        bytes.extend(sheet.px.iter().flatten());
+        std::fs::write(path, bytes).unwrap();
+        // Bake cost of one car at the shipped settings.
+        let t = std::time::Instant::now();
+        for i in 0..HEADINGS {
+            let a = frame_angle(i, HEADINGS);
+            std::hint::black_box(render_stack(&cars[6].slices, a, SQUASH, SPACING));
+            std::hint::black_box(render_shadow(&cars[6].footprint(), a, SQUASH));
+        }
+        let c = stack_canvas(cars[6].width, cars[6].height, cars[6].slices.len(), SQUASH, SPACING);
+        println!("baked {HEADINGS} headings in {:?}; frame canvas {}x{}", t.elapsed(), c.x, c.y);
     }
 }

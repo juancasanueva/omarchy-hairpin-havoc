@@ -59,7 +59,7 @@ procedural audio.
       stacked rendering (rotate all slices, lift 1 px each, vertical squash), ghosts and
       phantom fade on stacks, stacked previews in menus, and drop-in slice strips exported
       from the SpriteCook sprite stack generator (`assets/cars/<car-key>.png` + optional toml).
-- [ ] T15 Stack quality pass: bake each car into N pre-rendered headings at load (symmetric
+- [x] T15 Stack quality pass: bake each car into N pre-rendered headings at load (symmetric
       `(w-1)/2` rotation centre, rounded nearest sampling), one outline around the composite
       (no per-slice outlines), single sprite per car picking the nearest heading frame,
       `facing = "down"` default for imported strips, squash as one tunable constant, and
@@ -77,6 +77,14 @@ procedural audio.
   garage previews, translucent ghost + phantom (composited turn images), forced boost flames at
   the rear mid-stack, and a drop-in `pebble.png` + sidecar override loaded via `XDG_DATA_HOME`.
   New `src/game/stack.rs`; `src/game/sprites.rs` removed.
+- T15 (observed): `cargo build` ok; `cargo test` 150 passed (+1 ignored contact-sheet renderer);
+  `cargo clippy --all-targets -- -D warnings` clean. Cars are baked at load into `HEADINGS = 128`
+  frames (~16 ms and ~2 MB per car; 64 would step the nose ~1.8 px per frame) plus baked shadows,
+  drawn as one sprite each; per-slice outline removed, one outline traced per composite; symmetric
+  `(w-1)/2` centre with rounded nearest sampling (odd slices sampled as padded to even, matching the
+  even canvas); `SQUASH = 0.88` kept after a 0.75 vs 0.88 contact sheet (0.75 looked stubby);
+  imported strips default to `facing = "down"`. Screenshots: autodrive race, time-trial ghost
+  (single translucent sprite) with a nose-down drop-in strip, garage and title previews.
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 ## Next step
