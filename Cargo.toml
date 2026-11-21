@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "A top-down pixel-art arcade racer for Omarchy, built with Bevy."
 license = "MIT"
+authors = ["Juan Casanueva"]
+repository = "https://github.com/juancasanueva/omarchy-hairpin-havoc"
 
 [[bin]]
 name = "hairpin-havoc"

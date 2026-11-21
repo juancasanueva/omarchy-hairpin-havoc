@@ -1,5 +1,6 @@
 //! Bevy adapters: app wiring, screens, rendering, input and audio.
 
+pub mod about;
 pub mod audio;
 pub mod flame;
 pub mod fx;
@@ -32,6 +33,7 @@ pub enum AppState {
     Garage,
     Race,
     Results,
+    About,
 }
 
 /// Which mode the next race runs in.
@@ -77,6 +79,7 @@ pub fn build_app() -> App {
         items::ItemsPlugin,
         garage::GaragePlugin,
         trial::TrialPlugin,
+        about::AboutPlugin,
     ));
     app
 }

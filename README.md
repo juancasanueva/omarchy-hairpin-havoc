@@ -34,6 +34,7 @@ Requirements: Rust (stable), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommo
 | `G` | Toggle ghost (Time Trial) |
 | `Ctrl+V` | Load a friend's ghost code (Time Trial) |
 | `M` | Mute |
+| `I` | About: version, source link, license (title screen) |
 | `Esc` | Back to menu |
 
 ## How it plays

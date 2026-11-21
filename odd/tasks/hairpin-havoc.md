@@ -72,6 +72,9 @@ procedural audio.
       two palettes (drift boost orange, nitro blue) x 3 flicker frames, rimmed in its own hue
       (no black outline, no shadow), shaded as a hot ridge along the axis; replaces the two
       flat flame quads in `fx.rs`.
+- [x] T18 About screen (`AppState::About`, `I` on the title): version, source repo, license,
+      author, engine, font and platform read from `Cargo.toml` metadata; ENTER opens the repo
+      with `xdg-open`, C copies the link with `wl-copy`, ESC returns.
 
 ## Progress
 - All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
@@ -112,6 +115,8 @@ procedural audio.
   170 tests passed, clippy clean; in-game autodrive captures show the nitro and boost
   plumes behind the tail at every heading, peeking over the car when it faces away.
 - Play-test (user): stacked props and stacked flames approved ("PERFECT").
+- T18 verified: 173 tests passed (3 new: metadata rows, scheme stripping, https repo), clippy
+  clean; `HAIRPIN_AUTOSTART=about` capture shows every row. Repo published with MIT LICENSE.
 
 ## Next step
 Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,

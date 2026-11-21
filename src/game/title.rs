@@ -117,10 +117,11 @@ impl Plugin for TitlePlugin {
     }
 }
 
-/// Development aid: `HAIRPIN_AUTOSTART=race|trial|garage` skips the title screen.
+/// Development aid: `HAIRPIN_AUTOSTART=race|trial|garage|about` skips the title screen.
 fn dev_autostart(mut mode: ResMut<RaceMode>, mut next: ResMut<NextState<AppState>>) {
     match std::env::var("HAIRPIN_AUTOSTART").as_deref() {
         Ok("garage") => next.set(AppState::Garage),
+        Ok("about") => next.set(AppState::About),
         Ok("race") => {
             *mode = RaceMode::Race;
             next.set(AppState::Race);
@@ -372,7 +373,7 @@ fn spawn_title(
             });
 
             root.spawn(label(
-                "</> TRACK   ^/v MODE   ENTER START   G GARAGE   ESC QUIT".into(),
+                "</> TRACK   ^/v MODE   ENTER START   G GARAGE   I ABOUT   ESC QUIT".into(),
                 8.0,
                 pal.muted,
             ));
@@ -435,6 +436,9 @@ fn title_input(
     } else if keys.just_pressed(KeyCode::KeyG) {
         sfx.write(PlaySfx(Sfx::MenuSelect));
         next.set(AppState::Garage);
+    } else if keys.just_pressed(KeyCode::KeyI) {
+        sfx.write(PlaySfx(Sfx::MenuSelect));
+        next.set(AppState::About);
     } else if keys.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
     }
