@@ -9,6 +9,7 @@ pub mod meshes;
 pub mod palette;
 pub mod pixel;
 pub mod profile;
+pub mod props;
 pub mod race;
 pub mod results;
 pub mod stack;

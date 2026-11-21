@@ -44,10 +44,33 @@ pub const HEADINGS: usize = 128;
 pub const PREVIEW_ANGLE: f32 = -35.0 * std::f32::consts::PI / 180.0;
 
 const SHADOW_ALPHA: f32 = 0.3;
-/// Shadow offset from the car, in art pixels: 2 right, 3 down.
-const SHADOW_OFFSET: Vec2 = Vec2::new(2.0, -3.0);
-/// World z of every car shadow: above skids and slicks, below item boxes and cars.
-const SHADOW_Z: f32 = 14.0;
+/// Shadow offset from a stack's ground point, in art pixels: 2 right, 3 down.
+pub const SHADOW_OFFSET: Vec2 = Vec2::new(2.0, -3.0);
+/// World z of every car and lucky-box shadow: above skids and slicks, below
+/// the y-sorted layer.
+pub const SHADOW_Z: f32 = 14.0;
+
+/// World z of the y-sorted layer (cars, props, lucky boxes) at ground y = 0.
+/// Every track's ground y stays within +-4.5k px, so the layer spans about
+/// 20.6..29.4: above sparks (18) and the ghost (19), below rings (30).
+pub const SORT_Z: f32 = 25.0;
+/// z per world pixel of ground y.
+pub const SORT_STEP: f32 = 1.0 / 1024.0;
+/// Sort bases for [`ground_z`]; they only order objects standing on the same
+/// (whole-pixel) ground row. Cars add `slot * SORT_STEP / 8` to `CAR_SORT`.
+pub const CAR_SORT: f32 = SORT_Z;
+pub const PROP_SORT: f32 = SORT_Z + SORT_STEP * 0.5;
+pub const BOX_SORT: f32 = SORT_Z + SORT_STEP * 0.625;
+/// Largest z offset an attachment (boost flames) may take relative to its
+/// car, so it stays inside the car's own ground row.
+pub const ATTACH_Z: f32 = SORT_STEP / 16.0;
+
+/// World z of an object whose ground point is at world `y`: lower on screen
+/// (closer to the viewer) draws in front. Objects are single baked sprites
+/// anchored at their ground point, so slices of two objects never interleave.
+pub fn ground_z(base: f32, y: f32) -> f32 {
+    base - y * SORT_STEP
+}
 /// Outline traced around each finished composite.
 const OUTLINE: [u8; 4] = [14, 14, 18, 255];
 
@@ -160,16 +183,22 @@ impl CarSlices {
 
     /// Top-down union of every slice, white where any slice is opaque.
     pub fn footprint(&self) -> Grid {
-        let mut out = Grid::new(self.width, self.height);
-        for s in &self.slices {
-            for (o, p) in out.px.iter_mut().zip(&s.px) {
-                if p[3] > 0 {
-                    *o = [255; 4];
-                }
+        footprint(&self.slices)
+    }
+}
+
+/// Top-down union of `slices` (all the same size), white where any is opaque.
+pub fn footprint(slices: &[Grid]) -> Grid {
+    let Some(first) = slices.first() else { return Grid::new(0, 0) };
+    let mut out = Grid::new(first.width, first.height);
+    for s in slices {
+        for (o, p) in out.px.iter_mut().zip(&s.px) {
+            if p[3] > 0 {
+                *o = [255; 4];
             }
         }
-        out
     }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1325,6 +1354,31 @@ mod tests {
         assert_eq!(frame_index(5.0 * TAU + TAU / 8.0, 8), 1);
         for i in 0..HEADINGS {
             assert_eq!(frame_index(frame_angle(i, HEADINGS), HEADINGS), i);
+        }
+    }
+
+    #[test]
+    fn lower_ground_points_draw_in_front() {
+        // Lower on screen (smaller y) means higher z.
+        assert!(ground_z(SORT_Z, -10.0) > ground_z(SORT_Z, 10.0));
+        assert!(ground_z(PROP_SORT, 5.0) > ground_z(CAR_SORT + 3.0 * SORT_STEP / 8.0, 6.0));
+        // Same row: the tie-break bases keep their order, attachments stay inside the row.
+        let car = ground_z(CAR_SORT + 3.0 * SORT_STEP / 8.0, 7.0);
+        assert!(car + ATTACH_Z < ground_z(PROP_SORT, 7.0));
+        assert!(ground_z(PROP_SORT, 7.0) < ground_z(BOX_SORT, 7.0));
+        assert!(ground_z(BOX_SORT, 7.0) < ground_z(CAR_SORT, 6.0) - ATTACH_Z);
+    }
+
+    #[test]
+    fn sort_layer_fits_every_track() {
+        use crate::core::tracks::{TrackId, track_def};
+        for id in TrackId::ALL {
+            let (lo, hi) = track_def(id).build().bounds(500.0);
+            let (front, back) = (ground_z(BOX_SORT, lo.y), ground_z(CAR_SORT, hi.y));
+            assert!(front < 29.5 && back > 19.5, "{id:?}: {back}..{front}");
+            assert!(back > SHADOW_Z);
+            // Neighbouring rows stay distinct in f32.
+            assert!(ground_z(CAR_SORT, hi.y - 1.0) - ground_z(CAR_SORT, hi.y) > SORT_STEP * 0.9);
         }
     }
 

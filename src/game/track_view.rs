@@ -1,5 +1,6 @@
-//! Builds the visual track: ground, barriers, gravel, road, kerbs, start line,
-//! boost pads and scenery props, as a handful of vertex-colored meshes.
+//! Builds the visual track: ground, barriers, gravel, road, kerbs, start line
+//! and boost pads as a handful of vertex-colored meshes, plus the scenery
+//! props as baked sprite stacks y-sorted with the cars.
 
 use bevy::prelude::*;
 
@@ -7,8 +8,13 @@ use crate::core::track::{Path, Track};
 
 use super::meshes::MeshBuilder;
 use super::pixel::WORLD_LAYER;
+use super::props::{BakeCache, BakedProp, Model, PropColors};
+use super::stack::{PROP_SORT, SHADOW_OFFSET, ground_z};
 use super::theme::{PropKind, WorldTheme};
 use super::AppState;
+
+/// World z of prop shadows: above the track paint, below skid marks.
+const PROP_SHADOW_Z: f32 = 5.1;
 
 /// Small deterministic RNG for scenery placement.
 pub struct Rng(u32);
@@ -73,6 +79,7 @@ pub fn spawn_track_view(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    images: &mut Assets<Image>,
     track: &Track,
     theme: &WorldTheme,
     seed: u32,
@@ -209,9 +216,9 @@ pub fn spawn_track_view(
     spawn_mesh(commands, meshes, &mat, road, 3.0);
     spawn_mesh(commands, meshes, &mat, paint, 4.0);
 
-    // Scenery props beyond the barriers.
-    let mut props = MeshBuilder::default();
-    let mut shadows = MeshBuilder::default();
+    // Scenery props beyond the barriers: each (model, variant, angle) is baked
+    // once; every placed prop is one sprite plus its ground shadow.
+    let mut cache = BakeCache::new(PropColors::from_theme(theme));
     let mut placed: Vec<Vec2> = Vec::new();
     for _ in 0..(area / 9000.0) as usize {
         let p = Vec2::new(rng.range(lo.x, hi.x), rng.range(lo.y, hi.y)).floor();
@@ -221,10 +228,46 @@ pub fn spawn_track_view(
             continue;
         }
         placed.push(p);
-        draw_prop(&mut props, &mut shadows, theme, p, &mut rng);
+        let model = prop_model(theme.prop, &mut rng);
+        let variant = (rng.next_u32() % model.variants() as u32) as u8;
+        let angles = model.angles();
+        let angle = angles[rng.next_u32() as usize % angles.len()];
+        let baked = cache.get(model, variant, angle, images);
+        spawn_prop(commands, &baked, p, theme.shadow);
     }
-    spawn_mesh(commands, meshes, &mat, shadows, 5.0);
-    spawn_mesh(commands, meshes, &mat, props, 40.0);
+}
+
+/// Which model a placed prop of `kind` uses (desert tracks mix cacti and rocks).
+fn prop_model(kind: PropKind, rng: &mut Rng) -> Model {
+    match kind {
+        PropKind::Tree => Model::Tree,
+        PropKind::Pine => Model::Pine,
+        PropKind::Container => Model::Container,
+        PropKind::Cactus => {
+            if rng.f() < 0.55 {
+                Model::Cactus
+            } else {
+                Model::Rock
+            }
+        }
+    }
+}
+
+/// One prop standing at `p` (whole pixels): the baked canvas is centred on
+/// the ground point, so the sprite sits at `p` and sorts by `p.y`.
+fn spawn_prop(commands: &mut Commands, baked: &BakedProp, p: Vec2, shadow: Color) {
+    commands.spawn((
+        Sprite { image: baked.shadow.clone(), color: shadow, ..default() },
+        Transform::from_translation((p + SHADOW_OFFSET).extend(PROP_SHADOW_Z)),
+        WORLD_LAYER,
+        DespawnOnExit(AppState::Race),
+    ));
+    commands.spawn((
+        Sprite::from_image(baked.image.clone()),
+        Transform::from_translation(p.extend(ground_z(PROP_SORT, p.y))),
+        WORLD_LAYER,
+        DespawnOnExit(AppState::Race),
+    ));
 }
 
 /// Grid position and facing for starting slot `slot` (0 = pole).
@@ -233,48 +276,4 @@ pub fn grid_slot(track: &Track, slot: usize) -> (Vec2, Vec2) {
     let (p, t) = track.main.sample_at(track.length() - back);
     let lateral = if slot.is_multiple_of(2) { 20.0 } else { -20.0 };
     (p + t.perp() * lateral, t)
-}
-
-fn draw_prop(props: &mut MeshBuilder, shadows: &mut MeshBuilder, th: &WorldTheme, p: Vec2, rng: &mut Rng) {
-    let shadow_off = Vec2::new(4.0, -4.0);
-    match th.prop {
-        PropKind::Tree => {
-            let r = rng.range(9.0, 15.0);
-            shadows.circle(p + shadow_off, r, 10, th.shadow);
-            props.circle(p, r, 10, th.prop_dark);
-            props.circle(p + Vec2::new(-2.0, 2.0), r * 0.75, 10, th.prop_main);
-            if rng.f() < 0.3 {
-                props.circle(p + Vec2::new(r * 0.3, r * 0.2), 2.0, 5, th.prop_accent);
-            }
-        }
-        PropKind::Cactus => {
-            if rng.f() < 0.55 {
-                let h = rng.range(8.0, 13.0);
-                shadows.rect(p + shadow_off, Vec2::Y, h, 3.0, th.shadow);
-                props.rect(p, Vec2::Y, h, 3.0, th.prop_dark);
-                props.rect(p + Vec2::new(-1.0, 0.0), Vec2::Y, h - 1.0, 1.5, th.prop_main);
-                props.rect(p + Vec2::new(5.0, 2.0), Vec2::Y, 4.0, 2.0, th.prop_main);
-            } else {
-                let r = rng.range(5.0, 10.0);
-                shadows.circle(p + shadow_off, r, 7, th.shadow);
-                props.circle(p, r, 7, th.prop_accent);
-            }
-        }
-        PropKind::Container => {
-            let dir = if rng.f() < 0.5 { Vec2::X } else { Vec2::Y };
-            let color = if rng.f() < 0.5 { th.prop_main } else if rng.f() < 0.5 { th.prop_dark } else { th.prop_accent };
-            shadows.rect(p + shadow_off, dir, 16.0, 7.0, th.shadow);
-            props.rect(p, dir, 16.0, 7.0, color);
-            for k in -3..=3 {
-                props.rect(p + dir * (k as f32 * 4.5), dir, 0.5, 6.0, Color::srgba(0.0, 0.0, 0.0, 0.25));
-            }
-        }
-        PropKind::Pine => {
-            let r = rng.range(8.0, 13.0);
-            shadows.circle(p + shadow_off, r, 8, th.shadow);
-            props.circle(p, r, 8, th.prop_dark);
-            props.circle(p, r * 0.65, 8, th.prop_main);
-            props.circle(p + Vec2::new(-1.0, 1.0), r * 0.3, 6, th.prop_accent);
-        }
-    }
 }

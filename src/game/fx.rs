@@ -13,7 +13,7 @@ use crate::core::tracks::TrackId;
 use super::AppState;
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::race::{CurrentTrack, PlayerStep, Racer};
-use super::stack::{CarStack, SQUASH};
+use super::stack::{ATTACH_Z, CarStack, SQUASH};
 use super::theme::world_theme;
 use super::track_view::Rng;
 
@@ -29,9 +29,12 @@ const PARTICLE_CAP: usize = 400;
 const FADE_STEPS: usize = 8;
 
 /// Flame z relative to the car: in front of the stack when the tail faces the
-/// viewer, behind it otherwise (always below the next car's 0.1 z step).
-const FLAME_Z_FRONT: f32 = 0.05;
-const FLAME_Z_BACK: f32 = -0.05;
+/// viewer, behind it otherwise. Within `ATTACH_Z`, so flames stay inside their
+/// car's y-sort row and never cross another car or prop.
+const FLAME_Z_FRONT: f32 = ATTACH_Z * 0.5;
+const FLAME_Z_BACK: f32 = -ATTACH_Z * 0.5;
+/// Extra z of the inner flame over the outer one.
+const FLAME_Z_INNER: f32 = ATTACH_Z * 0.25;
 /// Fallback distance from car center to the tail, where flames start.
 const TAIL: f32 = 15.0;
 /// Fallback stack height; flames sit at roughly mid-stack.
@@ -501,7 +504,7 @@ fn update_flames(
         let (tail, height) = stack.map_or((TAIL, STACK_HEIGHT), |s| (s.half_length, s.height));
         let heading = r.state.heading;
         let tail_toward_viewer = heading.sin() > 0.0;
-        let z = if tail_toward_viewer { FLAME_Z_FRONT } else { FLAME_Z_BACK } + if flame.inner { 0.01 } else { 0.0 };
+        let z = if tail_toward_viewer { FLAME_Z_FRONT } else { FLAME_Z_BACK } + if flame.inner { FLAME_Z_INNER } else { 0.0 };
         tf.translation = flame_offset(heading, tail, len, height).round().extend(z);
         tf.rotation = Quat::from_rotation_z(heading);
         tf.scale = Vec3::new(len, wid, 1.0);

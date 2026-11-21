@@ -470,6 +470,11 @@ fn drive_ghost_car(
     }
     tf.translation.x = s.pos.x.round();
     tf.translation.y = s.pos.y.round();
+    // Depth-sort with cars and props by ground point (just behind a car on the same row).
+    tf.translation.z = crate::game::stack::ground_z(
+        crate::game::stack::CAR_SORT - crate::game::stack::SORT_STEP / 16.0,
+        tf.translation.y,
+    );
     *vis = Visibility::Inherited;
 }
 

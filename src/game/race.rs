@@ -13,7 +13,7 @@ use crate::core::tracks::{LAPS, TrackId, track_def};
 use super::audio::{EngineAudio, PlaySfx, Sfx};
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::profile::Profile;
-use super::stack::{StackArt, StackPose, car_slices, spawn_stack};
+use super::stack::{CAR_SORT, SORT_STEP, StackArt, StackPose, car_slices, ground_z, spawn_stack};
 use super::theme::world_theme;
 use super::track_view::{grid_slot, spawn_track_view};
 use super::{AppState, RaceMode};
@@ -180,7 +180,7 @@ fn setup_race(
     let def = track_def(id);
     let track = def.build();
     let theme = world_theme(id);
-    spawn_track_view(&mut commands, &mut meshes, &mut materials, &track, &theme, 0x9e37 + id.index() as u32 * 7919);
+    spawn_track_view(&mut commands, &mut meshes, &mut materials, &mut images, &track, &theme, 0x9e37 + id.index() as u32 * 7919);
 
     let player_car = profile.data.selected_car;
     let mut field: Vec<(CarId, bool)> = Vec::new();
@@ -225,7 +225,7 @@ fn setup_race(
                 brain,
             },
             // The root only carries position; the stacked slices are children.
-            Transform::from_xyz(pos.x, pos.y, car_z(slot)),
+            Transform::from_xyz(pos.x, pos.y, car_z(slot, pos.y.round())),
             Visibility::default(),
             WORLD_LAYER,
             DespawnOnExit(AppState::Race),
@@ -485,28 +485,19 @@ fn race_keys(
     }
 }
 
-/// World z of the car drawn `rank`-th from the back. Each car's stack spans
-/// less than 0.1, so stacks never interleave.
-fn car_z(rank: usize) -> f32 {
-    20.0 + rank as f32 * 0.1
+/// World z of the car in `slot` standing at ground `y`: y-sorted with the
+/// props and lucky boxes through the shared [`ground_z`]. Cars on the same row
+/// keep slot order; each car is one baked sprite, so stacks never interleave.
+fn car_z(slot: usize, y: f32) -> f32 {
+    ground_z(CAR_SORT + slot as f32 * SORT_STEP / 8.0, y)
 }
 
-/// Draw rank of a car at screen height `y` among `ys`: cars lower on screen
-/// (closer to the viewer) draw later. Ties keep slot order.
-pub fn draw_rank(slot: usize, y: f32, ys: &[(usize, f32)]) -> usize {
-    ys.iter()
-        .filter(|&&(s, oy)| oy > y || (oy == y && s < slot))
-        .count()
-}
-
-fn sync_visuals(mut q: Query<(&Racer, &mut Transform, &mut StackPose)>, mut ys: Local<Vec<(usize, f32)>>) {
-    ys.clear();
-    ys.extend(q.iter().map(|(r, _, _)| (r.slot, r.state.pos.y.round())));
+fn sync_visuals(mut q: Query<(&Racer, &mut Transform, &mut StackPose)>) {
     for (r, mut tf, mut pose) in &mut q {
         let y = r.state.pos.y.round();
         tf.translation.x = r.state.pos.x.round();
         tf.translation.y = y;
-        tf.translation.z = car_z(draw_rank(r.slot, y, &ys));
+        tf.translation.z = car_z(r.slot, y);
         pose.heading = r.state.heading;
     }
 }
@@ -572,9 +563,11 @@ mod tests {
     #[test]
     fn lower_cars_draw_in_front() {
         let ys = [(0, 10.0), (1, -5.0), (2, 30.0), (3, 10.0)];
-        let ranks: Vec<usize> = ys.iter().map(|&(s, y)| draw_rank(s, y, &ys)).collect();
-        // Highest on screen (slot 2) is drawn first, lowest (slot 1) last.
-        assert_eq!(ranks, vec![1, 3, 0, 2]);
-        assert!(car_z(3) - car_z(0) < 1.0);
+        let mut order: Vec<usize> = (0..4).collect();
+        order.sort_by(|&a, &b| car_z(ys[a].0, ys[a].1).total_cmp(&car_z(ys[b].0, ys[b].1)));
+        // Highest on screen (slot 2) is drawn first, lowest (slot 1) last; ties keep slot order.
+        assert_eq!(order, vec![2, 0, 3, 1]);
+        // Any car one row lower is in front of every car on the row above.
+        assert!(car_z(0, 9.0) > car_z(3, 10.0));
     }
 }

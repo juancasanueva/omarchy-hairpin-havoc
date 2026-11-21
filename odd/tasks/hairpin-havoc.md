@@ -64,7 +64,7 @@ procedural audio.
       (no per-slice outlines), single sprite per car picking the nearest heading frame,
       `facing = "down"` default for imported strips, squash as one tunable constant, and
       document `views_to_slices.py` (MIT) as an offline way to make slice strips.
-- [ ] T16 Stacked props: procedural voxel models for trees, pines, cacti, rocks, dock
+- [x] T16 Stacked props: procedural voxel models for trees, pines, cacti, rocks, dock
       containers and lucky-box crates, baked once per variant at track load (single outline,
       shared compositor), lucky boxes baked into spin frames, and consistent ground-point
       y-sorting between cars and props.
@@ -89,6 +89,17 @@ procedural audio.
   even canvas); `SQUASH = 0.88` kept after a 0.75 vs 0.88 contact sheet (0.75 looked stubby);
   imported strips default to `facing = "down"`. Screenshots: autodrive race, time-trial ghost
   (single translucent sprite) with a nose-down drop-in strip, garage and title previews.
+- T16 (observed): `cargo build` ok; `cargo test` 165 passed (+2 ignored contact-sheet renderers);
+  `cargo clippy --all-targets -- -D warnings` clean. New `src/game/props.rs`: pure voxel builders
+  (tree x4, pine x3, cactus x3, rock x3, container x3 colors, crate) with occupancy normals,
+  per-angle baked light and 4-tone hue-shifted ramps; `BakeCache` bakes each (model, variant,
+  angle) once per race (strong handles live only on the race's sprites). Flat prop meshes and the
+  box meshes removed; boxes bake 32 spin frames and turn in eased quarter turns that rest face-on
+  so the "?" reads. Shared `stack::ground_z(base, y)` y-sorts cars, props and boxes (z 20.6..29.4,
+  test checks every track fits); boost flames stay within `ATTACH_Z` of their car. Screenshots:
+  autodrive races on all four tracks (via a temporary `XDG_DATA_HOME` save), lucky boxes drawn
+  over/under a car by ground row, and a prop contact sheet. Known gap: the time-trial ghost
+  (`trial.rs`, z 19) is not y-sorted and draws under props.
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 - Play-test (user): stacked 3D cars approved; keyboard steering was too twitchy → softened

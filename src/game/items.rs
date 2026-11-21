@@ -15,11 +15,20 @@ use crate::core::tracks::track_def;
 use super::audio::{PlaySfx, Sfx};
 use super::meshes::MeshBuilder;
 use super::pixel::WORLD_LAYER;
+use super::props::{BakeCache, Model, PropColors};
 use super::race::{CurrentTrack, Loadout, Phase, RaceSession, RaceSet, Racer, Toast};
-use super::stack::StackPose;
+use super::stack::{BOX_SORT, SHADOW_OFFSET, SHADOW_Z, StackPose, frame_angle, frame_index, ground_z};
+use super::theme::world_theme;
 use super::{AppState, RaceMode};
 
-const BOX_Z: f32 = 15.0;
+/// Spin frames baked per race for the lucky-box crate.
+const BOX_FRAMES: usize = 32;
+/// Crate spin speed in turns per second.
+const BOX_SPIN: f32 = 0.25;
+/// Mean hover height of the crate above its ground point, and the bob amplitude, in px.
+const BOX_HOVER: f32 = 4.0;
+const BOX_BOB: f32 = 2.0;
+const BOX_SHADOW_ALPHA: f32 = 0.32;
 const SLICK_Z: f32 = 6.0;
 const RING_Z: f32 = 30.0;
 const RING_LIFE: f32 = 0.45;
@@ -77,12 +86,10 @@ struct ItemsState {
     rng: u32,
 }
 
-/// Meshes and material shared by all boxes and slicks.
+/// Mesh and material shared by all slicks.
 #[derive(Resource)]
 struct ItemAssets {
     material: Handle<ColorMaterial>,
-    crate_mesh: Handle<Mesh>,
-    shadow_mesh: Handle<Mesh>,
     slick_mesh: Handle<Mesh>,
 }
 
@@ -94,11 +101,20 @@ struct LuckyBox {
     hidden: f32,
 }
 
-/// The bobbing crate child of a `LuckyBox`.
+/// The spinning, bobbing crate sprite of a `LuckyBox`. The baked spin frames
+/// and shadows are strong handles, freed when the race's boxes despawn.
 #[derive(Component)]
 struct BoxCrate {
     phase: f32,
+    frames: Vec<Handle<Image>>,
+    shadows: Vec<Handle<Image>>,
+    /// The crate's ground shadow sprite.
+    shadow: Entity,
 }
+
+/// Ground shadow of a lucky box (stays on the ground while the crate bobs).
+#[derive(Component)]
+struct BoxShadow;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RingKind {
@@ -136,8 +152,6 @@ fn init_assets(
 ) {
     commands.insert_resource(ItemAssets {
         material: materials.add(ColorMaterial::default()),
-        crate_mesh: meshes.add(crate_mesh()),
-        shadow_mesh: meshes.add(ellipse_mesh(Vec2::new(1.5, -11.0), 10.0, 3.5, Color::srgba(0.0, 0.0, 0.0, 0.32))),
         slick_mesh: meshes.add(slick_mesh()),
     });
 }
@@ -153,7 +167,7 @@ fn reset_state(mut state: ResMut<ItemsState>) {
 fn spawn_boxes(
     mut commands: Commands,
     mut state: ResMut<ItemsState>,
-    assets: Res<ItemAssets>,
+    mut images: ResMut<Assets<Image>>,
     track: Option<Res<CurrentTrack>>,
     session: Option<Res<RaceSession>>,
 ) {
@@ -165,29 +179,53 @@ fn spawn_boxes(
     if session.mode != RaceMode::Race {
         return;
     }
+    // One spin bake per race, shared by every box.
+    let mut cache = BakeCache::new(PropColors::from_theme(&world_theme(track.id)));
+    let (frames, shadows): (Vec<_>, Vec<_>) = (0..BOX_FRAMES)
+        .map(|i| {
+            let baked = cache.get(Model::Crate, 0, frame_angle(i, BOX_FRAMES), &mut images);
+            (baked.image, baked.shadow)
+        })
+        .unzip();
     let stations = track_def(track.id).box_stations;
     state.collected = vec![i32::MIN; stations.len()];
     let len = track.track.length();
     for (station, frac) in stations.iter().enumerate() {
         let (center, tangent) = track.track.main.sample_at(frac * len);
         for (side, pos) in rules::station_boxes(center, tangent).into_iter().enumerate() {
-            commands
+            let ground = pos.round();
+            let z = ground_z(BOX_SORT, ground.y);
+            let root = commands
                 .spawn((
                     LuckyBox { station, pos, hidden: 0.0 },
-                    Mesh2d(assets.shadow_mesh.clone()),
-                    MeshMaterial2d(assets.material.clone()),
-                    Transform::from_xyz(pos.x.round(), pos.y.round(), BOX_Z),
+                    Transform::from_translation(ground.extend(z)),
                     Visibility::Visible,
                     WORLD_LAYER,
                     DespawnOnExit(AppState::Race),
                 ))
-                .with_child((
-                    BoxCrate { phase: station as f32 * 1.7 + side as f32 * 0.9 },
-                    Mesh2d(assets.crate_mesh.clone()),
-                    MeshMaterial2d(assets.material.clone()),
-                    Transform::from_xyz(0.0, 0.0, 0.5),
+                .id();
+            // The shadow sits on the shared ground shadow layer, below every car.
+            let shadow = commands
+                .spawn((
+                    BoxShadow,
+                    Sprite { image: shadows[0].clone(), color: Color::BLACK.with_alpha(BOX_SHADOW_ALPHA), ..default() },
+                    Transform::from_translation(SHADOW_OFFSET.extend(SHADOW_Z - z)),
                     WORLD_LAYER,
-                ));
+                    ChildOf(root),
+                ))
+                .id();
+            commands.spawn((
+                BoxCrate {
+                    phase: station as f32 * 1.7 + side as f32 * 0.9,
+                    frames: frames.clone(),
+                    shadows: shadows.clone(),
+                    shadow,
+                },
+                Sprite::from_image(frames[0].clone()),
+                Transform::from_xyz(0.0, BOX_HOVER, 0.0),
+                WORLD_LAYER,
+                ChildOf(root),
+            ));
         }
     }
 }
@@ -550,10 +588,30 @@ fn box_pickups(
 // Rendering
 // ---------------------------------------------------------------------------
 
+/// Crate spin angle at time `t`: quarter turns that ease in and out and rest
+/// face-on in between, so the "?" reads most of the time.
+fn spin_angle(t: f32) -> f32 {
+    let u = t * BOX_SPIN * 4.0;
+    let ease = |f: f32| f * f * (3.0 - 2.0 * f);
+    (u.floor() + ease(ease(u.fract()))) * TAU / 4.0
+}
+
+/// Crate hover height (px above the ground point) at bob phase `bob` (-1..1).
+fn hover_height(bob: f32) -> f32 {
+    (BOX_HOVER + bob * BOX_BOB).round()
+}
+
+/// Shadow alpha for a crate hovering `height` px up: fades a little as it rises.
+fn shadow_alpha(height: f32) -> f32 {
+    let t = ((height - (BOX_HOVER - BOX_BOB)) / (2.0 * BOX_BOB)).clamp(0.0, 1.0);
+    BOX_SHADOW_ALPHA * (1.0 - 0.35 * t)
+}
+
 fn animate_boxes(
     time: Res<Time>,
     mut roots: Query<(&LuckyBox, &mut Visibility)>,
-    mut crates: Query<(&BoxCrate, &mut Transform)>,
+    mut crates: Query<(&BoxCrate, &mut Transform, &mut Sprite), Without<BoxShadow>>,
+    mut shadows: Query<&mut Sprite, With<BoxShadow>>,
 ) {
     for (b, mut vis) in &mut roots {
         let want = if b.hidden > 0.0 { Visibility::Hidden } else { Visibility::Visible };
@@ -562,9 +620,24 @@ fn animate_boxes(
         }
     }
     let t = time.elapsed_secs();
-    for (c, mut tf) in &mut crates {
-        tf.translation.y = ((t * 3.2 + c.phase).sin() * 2.5).round();
-        tf.rotation = Quat::from_rotation_z((t * 1.9 + c.phase).sin() * 0.22);
+    for (c, mut tf, mut sprite) in &mut crates {
+        let height = hover_height((t * 3.2 + c.phase).sin());
+        if tf.translation.y != height {
+            tf.translation.y = height;
+        }
+        let i = frame_index(spin_angle(t + c.phase), c.frames.len());
+        if sprite.image != c.frames[i] {
+            sprite.image = c.frames[i].clone();
+        }
+        if let Ok(mut s) = shadows.get_mut(c.shadow) {
+            if s.image != c.shadows[i] {
+                s.image = c.shadows[i].clone();
+            }
+            let color = Color::BLACK.with_alpha(shadow_alpha(height));
+            if s.color != color {
+                s.color = color;
+            }
+        }
     }
 }
 
@@ -604,44 +677,6 @@ fn phantom_fade(mut q: Query<(&Racer, &mut StackPose), With<Loadout>>) {
 // ---------------------------------------------------------------------------
 // Procedural meshes
 // ---------------------------------------------------------------------------
-
-/// "?" glyph on a 5x7 grid, top row first.
-const GLYPH: [&str; 7] = [".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."];
-
-fn crate_mesh() -> Mesh {
-    let mut mb = MeshBuilder::default();
-    let outline = Color::srgb(0.30, 0.15, 0.05);
-    let body = Color::srgb(0.98, 0.70, 0.16);
-    let light = Color::srgb(1.0, 0.86, 0.42);
-    let dark = Color::srgb(0.84, 0.48, 0.10);
-    mb.rect(Vec2::ZERO, Vec2::X, 11.0, 11.0, outline);
-    mb.rect(Vec2::ZERO, Vec2::X, 10.0, 10.0, body);
-    mb.rect(Vec2::new(0.0, 8.5), Vec2::X, 10.0, 1.5, light);
-    mb.rect(Vec2::new(0.0, -8.5), Vec2::X, 10.0, 1.5, dark);
-    for (row, line) in GLYPH.iter().enumerate() {
-        for (col, ch) in line.chars().enumerate() {
-            if ch == '#' {
-                let c = Vec2::new(-4.0 + col as f32 * 2.0, 6.0 - row as f32 * 2.0);
-                // Drop shadow, then the white glyph cell.
-                mb.rect(c + Vec2::new(1.0, -1.0), Vec2::X, 1.0, 1.0, outline);
-                mb.rect(c, Vec2::X, 1.0, 1.0, Color::WHITE);
-            }
-        }
-    }
-    mb.build()
-}
-
-fn ellipse_mesh(c: Vec2, rx: f32, ry: f32, color: Color) -> Mesh {
-    let mut mb = MeshBuilder::default();
-    let n = 16;
-    for i in 0..n {
-        let a0 = i as f32 / n as f32 * TAU;
-        let a1 = (i + 1) as f32 / n as f32 * TAU;
-        let p = |a: f32| c + Vec2::new(a.cos() * rx, a.sin() * ry);
-        mb.tri(c, p(a0), p(a1), color);
-    }
-    mb.build()
-}
 
 fn slick_mesh() -> Mesh {
     let mut mb = MeshBuilder::default();
@@ -684,6 +719,34 @@ fn ring_mesh(radius: f32, kind: RingKind, frame: u32) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crate_bobs_above_the_ground_and_its_shadow_fades_as_it_rises() {
+        let (low, high) = (hover_height(-1.0), hover_height(1.0));
+        assert!(low >= 1.0 && high > low);
+        assert_eq!(low.fract(), 0.0);
+        assert!(shadow_alpha(high) < shadow_alpha(low));
+        assert!(shadow_alpha(high) > 0.5 * BOX_SHADOW_ALPHA);
+    }
+
+    #[test]
+    fn crate_spin_rests_face_on_and_never_turns_back() {
+        // Quarter-turn boundaries land exactly on the axis-aligned frames.
+        for k in 0..8 {
+            let t = k as f32 / (BOX_SPIN * 4.0);
+            let i = frame_index(spin_angle(t), BOX_FRAMES);
+            assert_eq!(i % (BOX_FRAMES / 4), 0, "t {t}");
+        }
+        // Near a rest the angle barely moves; it always advances.
+        let rest = 1.0 / (BOX_SPIN * 4.0);
+        assert!(spin_angle(rest + 0.05) - spin_angle(rest) < 0.01);
+        let mut prev = spin_angle(0.0);
+        for k in 1..200 {
+            let a = spin_angle(k as f32 * 0.02);
+            assert!(a >= prev);
+            prev = a;
+        }
+    }
 
     #[test]
     fn pair_mut_returns_requested_order() {
