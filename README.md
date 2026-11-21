@@ -52,7 +52,9 @@ Requirements: Rust (stable), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommo
 | Saves | `$XDG_DATA_HOME/hairpin-havoc/` (`save.toml`, `pb-<track>.txt` ghost codes). |
 | Theme | UI colors come from `~/.local/state/omarchy/current/theme/colors.toml`. |
 | Window | Wayland app id `hairpin-havoc`, usable in Hyprland window rules. |
-| Art & audio | Procedural: sprites, tracks and engine sounds are generated in code. |
+| Art & audio | Procedural: tracks, engine sounds and voxel cars are generated in code. |
+| Cars | Sprite-stacked: each car is a stack of slices rotated and lifted 1 px apart, so it reads as 3D. |
+| Custom car art | Drop a slice strip in `~/.local/share/hairpin-havoc/cars/<car-key>.png` — see [`assets/cars/README.md`](assets/cars/README.md). |
 | Font | Press Start 2P, SIL Open Font License (`assets/fonts/OFL.txt`). |
 
 ## Development

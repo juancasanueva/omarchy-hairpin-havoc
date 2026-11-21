@@ -55,7 +55,7 @@ procedural audio.
 - [x] T11 Time trial + ghosts: recording, playback, PB, ghost codes, clipboard.
 - [x] T12 Audio: procedural engine synth per car + SFX.
 - [x] T13 Omarchy integration: .desktop entry, install target, README.
-- [ ] T14 Sprite-stacked 3D-looking cars: procedural voxel car models sliced into layers,
+- [x] T14 Sprite-stacked 3D-looking cars: procedural voxel car models sliced into layers,
       stacked rendering (rotate all slices, lift 1 px each, vertical squash), ghosts and
       phantom fade on stacks, stacked previews in menus, and drop-in slice strips exported
       from the SpriteCook sprite stack generator (`assets/cars/<car-key>.png` + optional toml).
@@ -67,8 +67,13 @@ procedural audio.
 - Decisions: gadgets disabled in Time Trial (comparable ghost times); clipboard via
   `wl-copy`/`wl-paste` (bevy `system_clipboard` feature is off); `.atl/` untracked.
 - Risk assessment over the branch: medium, no review due (RDD entry rule not met).
+- T14 (observed): `cargo build` ok; `cargo test` 143 passed; `cargo clippy --all-targets -- -D warnings`
+  clean. Screenshots: autodrive race (stacked, lit cars with shadows, y-sorted), title and spinning
+  garage previews, translucent ghost + phantom (composited turn images), forced boost flames at
+  the rear mid-stack, and a drop-in `pebble.png` + sidecar override loaded via `XDG_DATA_HOME`.
+  New `src/game/stack.rs`; `src/game/sprites.rs` removed.
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 ## Next step
-T14 (user request: 3D-looking stacked car sprites). Then human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
+Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
 drift feel, AI pace per track.

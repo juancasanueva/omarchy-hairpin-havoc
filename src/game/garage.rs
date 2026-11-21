@@ -12,11 +12,15 @@ use super::AppState;
 use super::audio::{PlaySfx, Sfx};
 use super::palette::UiPalette;
 use super::profile::Profile;
-use super::sprites::car_image;
+use super::stack::{CarSlices, PREVIEW_ANGLE, car_slices, preview_image};
 use super::title::GameFont;
 
 /// Integer upscale of the big car preview.
 const PREVIEW_SCALE: f32 = 6.0;
+/// The big preview turns slowly, re-rendered at this rate (frames per second).
+const SPIN_FPS: f32 = 12.0;
+/// Turn speed of the big preview, radians per second.
+const SPIN_SPEED: f32 = 0.9;
 const PIP: f32 = 10.0;
 
 pub struct GaragePlugin;
@@ -28,18 +32,16 @@ impl Plugin for GaragePlugin {
             .add_systems(OnExit(AppState::Garage), cleanup_garage)
             .add_systems(
                 Update,
-                (garage_input, refresh_garage)
+                (garage_input, refresh_garage, spin_preview)
                     .chain()
                     .run_if(in_state(AppState::Garage)),
             );
     }
 }
 
-/// Sprite of `car` painted with `paint`, pointing along +X.
+/// Stacked 3/4 view of `car` painted with `paint` (drop-in art ignores paint).
 pub fn car_preview_image(car: CarId, paint: PaintId) -> Image {
-    let spec = car_spec(car);
-    let (body, accent) = paint.resolve_colors(&spec);
-    car_image(spec.body, body, accent)
+    preview_image(&car_slices(car, paint), PREVIEW_ANGLE)
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +222,10 @@ struct GarageMenu {
 struct GaragePreview {
     key: Option<(CarId, PaintId)>,
     handle: Option<Handle<Image>>,
+    slices: Option<CarSlices>,
+    angle: f32,
+    /// Seconds since the last re-render.
+    since: f32,
 }
 
 #[derive(Component)]
@@ -338,7 +344,23 @@ fn cleanup_garage(
         images.remove(&h);
     }
     preview.key = None;
+    preview.slices = None;
     commands.remove_resource::<GarageMenu>();
+}
+
+/// Slowly turns the big preview by re-rendering it into the same image asset.
+fn spin_preview(time: Res<Time>, mut preview: ResMut<GaragePreview>, mut images: ResMut<Assets<Image>>) {
+    let preview = &mut *preview;
+    let (Some(handle), Some(slices)) = (&preview.handle, &preview.slices) else { return };
+    preview.since += time.delta_secs();
+    if preview.since < 1.0 / SPIN_FPS {
+        return;
+    }
+    preview.angle = (preview.angle - preview.since * SPIN_SPEED).rem_euclid(std::f32::consts::TAU);
+    preview.since = 0.0;
+    if let Some(mut img) = images.get_mut(handle) {
+        *img = preview_image(slices, preview.angle);
+    }
 }
 
 fn garage_input(
@@ -459,7 +481,10 @@ fn refresh_garage(
         if let Some(old) = preview.handle.take() {
             images.remove(&old);
         }
-        preview.handle = key.map(|(car, paint)| images.add(car_preview_image(car, paint)));
+        preview.slices = key.map(|(car, paint)| car_slices(car, paint));
+        preview.angle = PREVIEW_ANGLE;
+        preview.since = 0.0;
+        preview.handle = preview.slices.as_ref().map(|s| images.add(preview_image(s, PREVIEW_ANGLE)));
         preview.key = key;
     }
     let preview_image = preview
@@ -786,6 +811,7 @@ impl Ui<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::stack::procedural_car;
 
     fn rich() -> SaveData {
         SaveData {
@@ -911,8 +937,9 @@ mod tests {
 
     #[test]
     fn car_preview_uses_paint() {
-        let a = car_preview_image(CarId::Pebble, PaintId::Factory);
-        let b = car_preview_image(CarId::Pebble, PaintId::Toxic);
+        // Procedural path only, so drop-in art on this machine cannot affect the test.
+        let render = |paint| preview_image(&procedural_car(CarId::Pebble, paint), PREVIEW_ANGLE);
+        let (a, b) = (render(PaintId::Factory), render(PaintId::Toxic));
         assert_eq!(a.size(), b.size());
         assert_ne!(a.data, b.data);
     }

@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use crate::core::ai::{self, AiBrain};
 use crate::core::car::{self, CarInput, CarModifiers, CarState, CarTuning, DT};
 use crate::core::cars::{CarId, car_spec};
-use crate::core::economy::{BoxItem, GadgetId};
+use crate::core::economy::{BoxItem, GadgetId, PaintId};
 use crate::core::race::{LapEvent, LapTracker, standings};
 use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
@@ -13,7 +13,7 @@ use crate::core::tracks::{LAPS, TrackId, track_def};
 use super::audio::{EngineAudio, PlaySfx, Sfx};
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::profile::Profile;
-use super::sprites::car_image;
+use super::stack::{StackArt, StackPose, car_slices, spawn_stack};
 use super::theme::world_theme;
 use super::track_view::{grid_slot, spawn_track_view};
 use super::{AppState, RaceMode};
@@ -201,11 +201,8 @@ fn setup_race(
 
     for (slot, &(car, is_player)) in field.iter().enumerate() {
         let spec = car_spec(car);
-        let (body, accent) = if is_player {
-            profile.data.paint_for(car).resolve_colors(&spec)
-        } else {
-            (spec.base_color, spec.accent_color)
-        };
+        let paint = if is_player { profile.data.paint_for(car) } else { PaintId::Factory };
+        let art = StackArt::new(&car_slices(car, paint), &mut images);
         let (pos, dir) = grid_slot(&track, slot);
         let state = CarState::new(pos, dir.to_angle());
         let progress = track.query(pos).progress;
@@ -227,12 +224,13 @@ fn setup_race(
                 drift_points: 0.0,
                 brain,
             },
-            Sprite::from_image(images.add(car_image(spec.body, body, accent))),
-            Transform::from_xyz(pos.x, pos.y, 20.0 + slot as f32 * 0.1)
-                .with_rotation(Quat::from_rotation_z(dir.to_angle())),
+            // The root only carries position; the stacked slices are children.
+            Transform::from_xyz(pos.x, pos.y, car_z(slot)),
+            Visibility::default(),
             WORLD_LAYER,
             DespawnOnExit(AppState::Race),
         ));
+        let root = entity.id();
         if is_player {
             entity.insert(Loadout {
                 gadget: profile.data.equipped_gadget,
@@ -243,6 +241,8 @@ fn setup_race(
             });
             camera.translation = pos.extend(camera.translation.z);
         }
+        let pose = StackPose { heading: dir.to_angle(), alpha: 1.0 };
+        spawn_stack(&mut commands, root, &art, pose);
     }
 
     commands.insert_resource(CurrentTrack { id, track });
@@ -485,11 +485,29 @@ fn race_keys(
     }
 }
 
-fn sync_visuals(mut q: Query<(&Racer, &mut Transform)>) {
-    for (r, mut tf) in &mut q {
+/// World z of the car drawn `rank`-th from the back. Each car's stack spans
+/// less than 0.1, so stacks never interleave.
+fn car_z(rank: usize) -> f32 {
+    20.0 + rank as f32 * 0.1
+}
+
+/// Draw rank of a car at screen height `y` among `ys`: cars lower on screen
+/// (closer to the viewer) draw later. Ties keep slot order.
+pub fn draw_rank(slot: usize, y: f32, ys: &[(usize, f32)]) -> usize {
+    ys.iter()
+        .filter(|&&(s, oy)| oy > y || (oy == y && s < slot))
+        .count()
+}
+
+fn sync_visuals(mut q: Query<(&Racer, &mut Transform, &mut StackPose)>, mut ys: Local<Vec<(usize, f32)>>) {
+    ys.clear();
+    ys.extend(q.iter().map(|(r, _, _)| (r.slot, r.state.pos.y.round())));
+    for (r, mut tf, mut pose) in &mut q {
+        let y = r.state.pos.y.round();
         tf.translation.x = r.state.pos.x.round();
-        tf.translation.y = r.state.pos.y.round();
-        tf.rotation = Quat::from_rotation_z(r.state.heading);
+        tf.translation.y = y;
+        tf.translation.z = car_z(draw_rank(r.slot, y, &ys));
+        pose.heading = r.state.heading;
     }
 }
 
@@ -545,4 +563,18 @@ fn engine_audio(session: Res<RaceSession>, racers: Query<&Racer>, mut engine: Re
 pub fn classification(racers: &[&Racer]) -> Vec<usize> {
     let trackers: Vec<&LapTracker> = racers.iter().map(|r| &r.lap).collect();
     standings(&trackers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lower_cars_draw_in_front() {
+        let ys = [(0, 10.0), (1, -5.0), (2, 30.0), (3, 10.0)];
+        let ranks: Vec<usize> = ys.iter().map(|&(s, y)| draw_rank(s, y, &ys)).collect();
+        // Highest on screen (slot 2) is drawn first, lowest (slot 1) last.
+        assert_eq!(ranks, vec![1, 3, 0, 2]);
+        assert!(car_z(3) - car_z(0) < 1.0);
+    }
 }

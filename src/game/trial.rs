@@ -6,7 +6,8 @@ use std::process::{Command, Stdio};
 
 use bevy::prelude::*;
 
-use crate::core::cars::{CarId, car_spec};
+use crate::core::cars::CarId;
+use crate::core::economy::PaintId;
 use crate::core::ghost::{Ghost, GhostRecorder, MAX_LAP_TIME, decode_code};
 use crate::core::save;
 use crate::core::tracks::{TrackId, track_def};
@@ -16,7 +17,7 @@ use super::pixel::WORLD_LAYER;
 use super::profile::Profile;
 use super::race::{Phase, RaceSession, RaceSet, Racer, Toast};
 use super::results::fmt_time;
-use super::sprites::car_image;
+use super::stack::{StackArt, StackPose, car_slices, spawn_stack};
 use super::title::GameFont;
 use super::{AppState, RaceMode};
 
@@ -285,10 +286,6 @@ fn setup_trial(
     // The image is assigned once the ghost to play is known.
     commands.spawn((
         GhostCar { shown: None },
-        Sprite {
-            color: Color::srgba(1.0, 1.0, 1.0, GHOST_ALPHA),
-            ..default()
-        },
         Transform::from_xyz(0.0, 0.0, GHOST_Z),
         Visibility::Hidden,
         WORLD_LAYER,
@@ -427,15 +424,24 @@ fn trial_keys(
     }
 }
 
+type GhostCarItems = (
+    Entity,
+    &'static mut GhostCar,
+    &'static mut Transform,
+    &'static mut Visibility,
+    Option<&'static mut StackPose>,
+);
+
 fn drive_ghost_car(
+    mut commands: Commands,
     session: Res<RaceSession>,
     state: Res<TrialState>,
     friend: Res<FriendGhost>,
     racers: Query<&Racer>,
     mut images: ResMut<Assets<Image>>,
-    mut ghost_car: Query<(&mut GhostCar, &mut Sprite, &mut Transform, &mut Visibility)>,
+    mut ghost_car: Query<GhostCarItems>,
 ) {
-    let Ok((mut car, mut sprite, mut tf, mut vis)) = ghost_car.single_mut() else { return };
+    let Ok((entity, mut car, mut tf, mut vis, pose)) = ghost_car.single_mut() else { return };
     let ghost = playback_ghost(friend.0.as_ref(), state.pb.as_ref(), state.track);
     let player = racers.iter().find(|r| r.is_player);
     let sample = match (ghost, player) {
@@ -452,14 +458,18 @@ fn drive_ghost_car(
         *vis = Visibility::Hidden;
         return;
     };
+    // The ghost is a translucent stack of the ghost car in its factory colors.
+    let ghost_pose = StackPose { heading: s.heading, alpha: GHOST_ALPHA };
     if car.shown != Some(g.car) {
-        let spec = car_spec(g.car);
-        sprite.image = images.add(car_image(spec.body, spec.base_color, spec.accent_color));
+        let art = StackArt::new(&car_slices(g.car, PaintId::Factory), &mut images);
+        commands.entity(entity).despawn_children();
+        spawn_stack(&mut commands, entity, &art, ghost_pose);
         car.shown = Some(g.car);
+    } else if let Some(mut pose) = pose {
+        *pose = ghost_pose;
     }
     tf.translation.x = s.pos.x.round();
     tf.translation.y = s.pos.y.round();
-    tf.rotation = Quat::from_rotation_z(s.heading);
     *vis = Visibility::Inherited;
 }
 

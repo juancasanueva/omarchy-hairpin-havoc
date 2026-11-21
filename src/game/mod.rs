@@ -11,7 +11,7 @@ pub mod pixel;
 pub mod profile;
 pub mod race;
 pub mod results;
-pub mod sprites;
+pub mod stack;
 pub mod theme;
 pub mod title;
 pub mod trial;
@@ -66,6 +66,7 @@ pub fn build_app() -> App {
         audio::GameAudioPlugin,
         title::TitlePlugin,
         race::RacePlugin,
+        stack::StackPlugin,
         results::ResultsPlugin,
     ))
     .add_plugins((

@@ -33,7 +33,7 @@ const PREVIEW_MARGIN: f32 = 8.0;
 /// Every n-th main-path sample becomes a preview dot.
 const PREVIEW_STRIDE: usize = 8;
 const PREVIEW_DOT: f32 = 3.0;
-/// Integer upscale of the car sprite on the title screen.
+/// Integer upscale of the stacked car preview on the title screen.
 const CAR_SCALE: f32 = 4.0;
 
 /// Current title-screen selections; initialized from the profile on enter.
@@ -341,17 +341,8 @@ fn spawn_title(
                 BackgroundColor(pal.panel),
             ))
             .with_children(|row| {
-                // The sprite points along +X; rotate it to point up. The box is
-                // square so the rotated sprite fits either way.
-                let side = car_size.x.max(car_size.y);
-                row.spawn(Node {
-                    width: px(side),
-                    height: px(side),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_child((
+                // Stacked 3/4 view of the selected car.
+                row.spawn((
                     ImageNode::new(car_handle),
                     Node {
                         width: px(car_size.x),
@@ -359,7 +350,6 @@ fn spawn_title(
                         flex_shrink: 0.0,
                         ..default()
                     },
-                    UiTransform::from_rotation(Rot2::degrees(-90.0)),
                 ));
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,

@@ -16,6 +16,7 @@ use super::audio::{PlaySfx, Sfx};
 use super::meshes::MeshBuilder;
 use super::pixel::WORLD_LAYER;
 use super::race::{CurrentTrack, Loadout, Phase, RaceSession, RaceSet, Racer, Toast};
+use super::stack::StackPose;
 use super::{AppState, RaceMode};
 
 const BOX_Z: f32 = 15.0;
@@ -590,11 +591,12 @@ fn animate_rings(
     }
 }
 
-fn phantom_fade(mut q: Query<(&Racer, &mut Sprite), With<Loadout>>) {
-    for (r, mut sprite) in &mut q {
+/// Fades the player's whole car stack while Phantom is active, and restores it.
+fn phantom_fade(mut q: Query<(&Racer, &mut StackPose), With<Loadout>>) {
+    for (r, mut pose) in &mut q {
         let want = if r.mods.phantom { PHANTOM_ALPHA } else { 1.0 };
-        if (sprite.color.alpha() - want).abs() > 0.01 {
-            sprite.color.set_alpha(want);
+        if (pose.alpha - want).abs() > 0.01 {
+            pose.alpha = want;
         }
     }
 }

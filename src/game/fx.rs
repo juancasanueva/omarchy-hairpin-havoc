@@ -13,6 +13,7 @@ use crate::core::tracks::TrackId;
 use super::AppState;
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::race::{CurrentTrack, PlayerStep, Racer};
+use super::stack::{CarStack, SQUASH};
 use super::theme::world_theme;
 use super::track_view::Rng;
 
@@ -27,9 +28,14 @@ const PARTICLE_CAP: usize = 400;
 /// Number of pre-built opacity steps per effect color.
 const FADE_STEPS: usize = 8;
 
-const FLAME_Z: f32 = 19.5;
-/// Distance from car center to the tail, where flames start.
+/// Flame z relative to the car: in front of the stack when the tail faces the
+/// viewer, behind it otherwise (always below the next car's 0.1 z step).
+const FLAME_Z_FRONT: f32 = 0.05;
+const FLAME_Z_BACK: f32 = -0.05;
+/// Fallback distance from car center to the tail, where flames start.
 const TAIL: f32 = 15.0;
+/// Fallback stack height; flames sit at roughly mid-stack.
+const STACK_HEIGHT: f32 = 10.0;
 
 /// Exponential shake decay rate (1/s) and the largest offset in world pixels.
 pub const SHAKE_DECAY: f32 = 14.0;
@@ -97,11 +103,23 @@ pub fn impact_shake(impact: f32) -> f32 {
     (impact / 300.0 * SHAKE_MAX).clamp(0.0, SHAKE_MAX)
 }
 
-/// Rear wheel positions (left, right) of a car.
+/// Squashes a car-relative ground offset like the stacked car sprite is squashed.
+pub fn squashed(offset: Vec2) -> Vec2 {
+    Vec2::new(offset.x, offset.y * SQUASH)
+}
+
+/// Rear wheel positions (left, right) of a car, matching the squashed stack.
 pub fn rear_wheels(pos: Vec2, heading: f32) -> [Vec2; 2] {
     let f = Vec2::from_angle(heading);
-    let axle = pos - f * REAR_AXLE;
-    [axle + f.perp() * REAR_TRACK, axle - f.perp() * REAR_TRACK]
+    let axle = -f * REAR_AXLE;
+    [pos + squashed(axle + f.perp() * REAR_TRACK), pos + squashed(axle - f.perp() * REAR_TRACK)]
+}
+
+/// Center of a flame of length `len` behind a car, relative to the car root:
+/// on the ground behind the tail, raised to mid-stack height.
+pub fn flame_offset(heading: f32, tail: f32, len: f32, stack_height: f32) -> Vec2 {
+    let back = -Vec2::from_angle(heading) * (tail + len * 0.5);
+    squashed(back) + Vec2::new(0.0, stack_height * 0.5)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +215,7 @@ struct Flame {
 struct HasFlame;
 
 /// Racers that still need their flame quads.
-type FlamelessRacers<'w, 's> = Query<'w, 's, (Entity, &'static Transform), (With<Racer>, Without<HasFlame>)>;
+type FlamelessRacers<'w, 's> = Query<'w, 's, Entity, (With<Racer>, Without<HasFlame>)>;
 
 // ---------------------------------------------------------------------------
 // Systems
@@ -259,16 +277,15 @@ fn attach_flames(
     racers: FlamelessRacers,
 ) {
     let Some(assets) = assets else { return };
-    for (e, tf) in &racers {
-        // Children inherit the car's transform; cancel its z to sit at FLAME_Z.
-        let z = FLAME_Z - tf.translation.z;
+    for e in &racers {
+        // Placed relative to the (unrotated) car root each frame in `update_flames`.
         commands.entity(e).insert(HasFlame).with_children(|c| {
-            for (inner, dz) in [(false, 0.0), (true, 0.01)] {
+            for inner in [false, true] {
                 c.spawn((
                     Flame { owner: e, inner },
                     Mesh2d(assets.quad.clone()),
                     MeshMaterial2d(assets.flame[usize::from(inner)].clone()),
-                    Transform::from_xyz(-TAIL, 0.0, z + dz),
+                    Transform::from_xyz(-TAIL, 0.0, FLAME_Z_BACK),
                     Visibility::Hidden,
                     WORLD_LAYER,
                 ));
@@ -462,7 +479,7 @@ fn update_particles(
 fn update_flames(
     time: Res<Time>,
     assets: Option<Res<FxAssets>>,
-    racers: Query<&Racer>,
+    racers: Query<(&Racer, Option<&CarStack>)>,
     mut flames: Query<(&Flame, &mut Transform, &mut Visibility, &mut MeshMaterial2d<ColorMaterial>)>,
     mut flicker: Local<u32>,
 ) {
@@ -470,7 +487,7 @@ fn update_flames(
     *flicker = flicker.wrapping_add(1);
     let t = time.elapsed_secs();
     for (flame, mut tf, mut vis, mut mat) in &mut flames {
-        let Ok(r) = racers.get(flame.owner) else { continue };
+        let Ok((r, stack)) = racers.get(flame.owner) else { continue };
         if !r.state.is_boosting() {
             vis.set_if_neq(Visibility::Hidden);
             continue;
@@ -481,7 +498,12 @@ fn update_flames(
         let wobble = ((t * 47.0 + flame.owner.index_u32() as f32 * 1.7).sin() * 0.5 + 0.5) * 0.6 + 0.7;
         let (len, wid) = if flame.inner { (5.0 * wobble, 3.0) } else { (9.0 * wobble, 5.0) };
         let len = len.round().max(2.0);
-        tf.translation.x = -(TAIL + len * 0.5);
+        let (tail, height) = stack.map_or((TAIL, STACK_HEIGHT), |s| (s.half_length, s.height));
+        let heading = r.state.heading;
+        let tail_toward_viewer = heading.sin() > 0.0;
+        let z = if tail_toward_viewer { FLAME_Z_FRONT } else { FLAME_Z_BACK } + if flame.inner { 0.01 } else { 0.0 };
+        tf.translation = flame_offset(heading, tail, len, height).round().extend(z);
+        tf.rotation = Quat::from_rotation_z(heading);
         tf.scale = Vec3::new(len, wid, 1.0);
         let swap = (*flicker / 3) % 2 == 1 && !flame.inner;
         let idx = usize::from(flame.inner ^ swap) + if nitro { 2 } else { 0 };
@@ -603,7 +625,17 @@ mod tests {
     #[test]
     fn rear_wheels_sit_behind_center() {
         let [l, r] = rear_wheels(Vec2::ZERO, 0.0);
-        assert_eq!(l, Vec2::new(-REAR_AXLE, REAR_TRACK));
-        assert_eq!(r, Vec2::new(-REAR_AXLE, -REAR_TRACK));
+        assert_eq!(l, Vec2::new(-REAR_AXLE, REAR_TRACK * SQUASH));
+        assert_eq!(r, Vec2::new(-REAR_AXLE, -REAR_TRACK * SQUASH));
+    }
+
+    #[test]
+    fn flames_sit_behind_the_tail_at_mid_stack() {
+        let o = flame_offset(0.0, 15.0, 6.0, 10.0);
+        assert_eq!(o, Vec2::new(-18.0, 5.0));
+        // Pointing up, the flame hangs below the car (squashed), still lifted.
+        let up = flame_offset(std::f32::consts::FRAC_PI_2, 15.0, 6.0, 10.0);
+        assert!((up.x).abs() < 1e-4);
+        assert!((up.y - (-18.0 * SQUASH + 5.0)).abs() < 1e-4);
     }
 }
