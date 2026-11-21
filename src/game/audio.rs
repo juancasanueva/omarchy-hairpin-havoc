@@ -39,18 +39,22 @@ impl Plugin for GameAudioPlugin {
     }
 }
 
-/// Global audio settings. Muted silences the engine and skips effects; volume scales everything.
+/// Global audio settings, applied from the settings screen. Muted silences the
+/// engine and skips effects; `engine` and `effects` are linear gains that
+/// already include the master volume.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct AudioSettings {
     pub muted: bool,
-    pub volume: f32,
+    pub engine: f32,
+    pub effects: f32,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
             muted: false,
-            volume: 0.7,
+            engine: 0.7,
+            effects: 0.7,
         }
     }
 }
@@ -346,8 +350,8 @@ pub struct EngineParams {
 impl EngineParams {
     /// Derive the decoder target from the game-facing resources.
     pub fn from_state(engine: &EngineAudio, settings: &AudioSettings) -> Self {
-        let gain = if engine.active && !settings.muted {
-            settings.volume
+        let gain = if engine.active && !settings.muted && settings.engine.is_finite() {
+            settings.engine.clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -1217,8 +1221,8 @@ fn play_sfx(
         let v = &mut volumes[slot as usize];
         *v = v.max(scale);
     }
-    let master = if settings.volume.is_finite() {
-        settings.volume.clamp(0.0, 1.0)
+    let master = if settings.effects.is_finite() {
+        settings.effects.clamp(0.0, 1.0)
     } else {
         0.0
     };
@@ -1347,7 +1351,7 @@ mod tests {
         };
         let muted = AudioSettings {
             muted: true,
-            volume: 0.7,
+            ..AudioSettings::default()
         };
         assert_eq!(EngineParams::from_state(&engine, &muted).gain, 0.0);
         let idle = EngineAudio {
@@ -1359,6 +1363,10 @@ mod tests {
             0.0
         );
         assert!(EngineParams::from_state(&engine, &AudioSettings::default()).gain > 0.6);
+        let quiet = AudioSettings { engine: 0.0, ..AudioSettings::default() };
+        assert_eq!(EngineParams::from_state(&engine, &quiet).gain, 0.0);
+        let half = AudioSettings { engine: 0.35, effects: 0.0, ..AudioSettings::default() };
+        assert_eq!(EngineParams::from_state(&engine, &half).gain, 0.35);
     }
 
     #[test]

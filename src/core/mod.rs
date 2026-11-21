@@ -6,5 +6,6 @@ pub mod ghost;
 pub mod items;
 pub mod race;
 pub mod save;
+pub mod settings;
 pub mod track;
 pub mod tracks;

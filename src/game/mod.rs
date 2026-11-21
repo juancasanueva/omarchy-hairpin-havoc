@@ -2,6 +2,7 @@
 
 pub mod about;
 pub mod audio;
+pub mod controls;
 pub mod flame;
 pub mod fx;
 pub mod garage;
@@ -14,6 +15,7 @@ pub mod profile;
 pub mod props;
 pub mod race;
 pub mod results;
+pub mod settings;
 pub mod stack;
 pub mod theme;
 pub mod title;
@@ -34,6 +36,7 @@ pub enum AppState {
     Race,
     Results,
     About,
+    Settings,
 }
 
 /// Which mode the next race runs in.
@@ -80,6 +83,7 @@ pub fn build_app() -> App {
         garage::GaragePlugin,
         trial::TrialPlugin,
         about::AboutPlugin,
+        settings::SettingsPlugin,
     ));
     app
 }

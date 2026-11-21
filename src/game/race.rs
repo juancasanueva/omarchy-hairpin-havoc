@@ -7,10 +7,12 @@ use crate::core::car::{self, CarInput, CarModifiers, CarState, CarTuning, DT};
 use crate::core::cars::{CarId, car_spec};
 use crate::core::economy::{BoxItem, GadgetId, PaintId};
 use crate::core::race::{LapEvent, LapTracker, standings};
+use crate::core::settings::Action;
 use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
 
 use super::audio::{EngineAudio, PlaySfx, Sfx};
+use super::controls::Controls;
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::profile::Profile;
 use super::stack::{CAR_SORT, SORT_STEP, StackArt, StackPose, car_slices, ground_z, spawn_stack};
@@ -251,7 +253,7 @@ fn setup_race(
         phase: Phase::Countdown,
         clock: -COUNTDOWN,
         finish_timer: 0.0,
-        wide_camera: false,
+        wide_camera: profile.data.settings.wide_camera,
     });
 }
 
@@ -261,17 +263,18 @@ fn silence_engine(mut engine: ResMut<EngineAudio>) {
 
 fn player_input(
     keys: Res<ButtonInput<KeyCode>>,
+    controls: Res<Controls>,
     mut memory: ResMut<SteerMemory>,
     session: Res<RaceSession>,
     mut racers: Query<&mut Racer>,
 ) {
-    let held = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
-    let left = held(KeyCode::KeyA, KeyCode::ArrowLeft);
-    let right = held(KeyCode::KeyD, KeyCode::ArrowRight);
-    if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
+    let held = |a: Action| controls.pressed(&keys, a);
+    let left = held(Action::SteerLeft);
+    let right = held(Action::SteerRight);
+    if controls.just_pressed(&keys, Action::SteerLeft) {
         memory.last = 1.0;
     }
-    if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
+    if controls.just_pressed(&keys, Action::SteerRight) {
         memory.last = -1.0;
     }
     // When both are held, the most recently pressed direction wins.
@@ -282,11 +285,11 @@ fn player_input(
         _ => 0.0,
     };
     let input = CarInput {
-        throttle: if held(KeyCode::KeyW, KeyCode::ArrowUp) { 1.0 } else { 0.0 },
-        brake: if held(KeyCode::KeyS, KeyCode::ArrowDown) { 1.0 } else { 0.0 },
+        throttle: if held(Action::Throttle) { 1.0 } else { 0.0 },
+        brake: if held(Action::Brake) { 1.0 } else { 0.0 },
         steer,
-        handbrake: keys.pressed(KeyCode::Space),
-        nitro: held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
+        handbrake: held(Action::Drift),
+        nitro: held(Action::Nitro),
     };
     let racing = session.phase == Phase::Running;
     for mut r in &mut racers {

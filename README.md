@@ -29,6 +29,8 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 
 ## Controls
 
+Driving keys are the defaults; rebind them in Settings (`O`).
+
 | Key | Action |
 |-----|--------|
 | `W` / `↑` | Throttle |
@@ -42,6 +44,7 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 | `G` | Toggle ghost (Time Trial) |
 | `Ctrl+V` | Load a friend's ghost code (Time Trial) |
 | `M` | Mute |
+| `O` | Settings (title screen) |
 | `I` | About: version, source link, license (title screen) |
 | `Esc` | Back to menu |
 
@@ -63,6 +66,7 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 | Topic | Decision |
 |-------|----------|
 | Saves | `$XDG_DATA_HOME/hairpin-havoc/` (`save.toml`, `pb-<track>.txt` ghost codes). |
+| Settings | Master, engine and effects volume, sound, fullscreen, pixel size, default race camera, and rebindable driving keys (each keeps a fixed alternate: arrows, right Shift, `Q`). Saved in `save.toml`. |
 | Theme | UI colors come from `~/.local/state/omarchy/current/theme/colors.toml`. |
 | Window | Wayland app id `hairpin-havoc`, usable in Hyprland window rules. |
 | Art & audio | Procedural: tracks, engine sounds, voxel cars and boost flames are generated in code. |

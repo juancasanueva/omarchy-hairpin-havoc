@@ -10,6 +10,8 @@ use crate::core::race::standings;
 use crate::core::tracks::track_def;
 
 use super::audio::AudioSettings;
+use super::controls::Controls;
+use crate::core::settings::Action;
 use super::palette::UiPalette;
 use super::profile::Profile;
 use super::race::{CurrentTrack, Loadout, Phase, RaceSession, Racer, Toast};
@@ -38,7 +40,6 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LapDeltaState>()
-            .add_systems(Startup, init_mute)
             .add_systems(Update, toggle_mute)
             .add_systems(OnEnter(AppState::Race), spawn_hud)
             .add_systems(
@@ -146,10 +147,6 @@ pub fn pod_view(l: &Loadout) -> PodView {
 // ---------------------------------------------------------------------------
 // Mute
 // ---------------------------------------------------------------------------
-
-fn init_mute(profile: Res<Profile>, mut audio: ResMut<AudioSettings>) {
-    audio.muted = profile.data.muted;
-}
 
 fn toggle_mute(keys: Res<ButtonInput<KeyCode>>, mut audio: ResMut<AudioSettings>, mut profile: ResMut<Profile>) {
     if keys.just_pressed(KeyCode::KeyM) {
@@ -270,9 +267,12 @@ fn spawn_hud(
     font: Res<GameFont>,
     pal: Res<UiPalette>,
     mode: Res<RaceMode>,
+    controls: Res<Controls>,
     mut delta: ResMut<LapDeltaState>,
 ) {
     *delta = LapDeltaState::default();
+    let use_key = controls.label(Action::UseItem).to_string();
+    let use_key_size = if use_key.chars().count() > 2 { 8.0 } else { 12.0 };
     let f = &*font;
     let p = &*pal;
     let track_bg = p.panel_hi;
@@ -449,15 +449,16 @@ fn spawn_hud(
             .with_children(|c| {
                 c.spawn((
                     Node {
-                        width: px(26),
+                        min_width: px(26),
                         height: px(26),
+                        padding: UiRect::horizontal(px(4)),
                         border: UiRect::all(px(2)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     },
                     BorderColor::all(dim(p)),
-                    children![(Text::new("E"), f.text(12.0), TextColor(p.foreground))],
+                    children![(Text::new(use_key), f.text(use_key_size), TextColor(p.foreground))],
                 ));
                 c.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(4), ..default() })
                     .with_children(|col| {

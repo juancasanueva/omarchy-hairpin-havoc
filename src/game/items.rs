@@ -10,9 +10,11 @@ use bevy::prelude::*;
 use crate::core::car::{CarModifiers, DT};
 use crate::core::economy::{BoxItem, GadgetId, roll_box_item};
 use crate::core::items::{self as rules, Hit, Slick};
+use crate::core::settings::Action as Bind;
 use crate::core::tracks::track_def;
 
 use super::audio::{PlaySfx, Sfx};
+use super::controls::Controls;
 use super::meshes::MeshBuilder;
 use super::pixel::WORLD_LAYER;
 use super::props::{BakeCache, Model, PropColors};
@@ -234,8 +236,8 @@ fn spawn_boxes(
 // Use (gadget or held item)
 // ---------------------------------------------------------------------------
 
-fn queue_use(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<ItemsState>) {
-    if keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyQ) {
+fn queue_use(keys: Res<ButtonInput<KeyCode>>, controls: Res<Controls>, mut state: ResMut<ItemsState>) {
+    if controls.just_pressed(&keys, Bind::UseItem) {
         state.use_pending = true;
     }
 }

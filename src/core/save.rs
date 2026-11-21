@@ -18,6 +18,7 @@ use super::economy::{
     GadgetId, PaintId, UpgradeKind, UpgradeLevels, apply_upgrades, upgrade_price,
 };
 use super::ghost::{Ghost, MAX_LAP_TIME, decode_code, encode_code};
+use super::settings::Settings;
 use super::tracks::TrackId;
 
 pub const APP_DIR_NAME: &str = "hairpin-havoc";
@@ -49,6 +50,9 @@ pub struct SaveData {
     /// Best lap seconds keyed by `TrackId::key`.
     #[serde(deserialize_with = "lenient_map")]
     pub best_laps: HashMap<String, f32>,
+    /// Settings screen values; a malformed table falls back to the defaults.
+    #[serde(deserialize_with = "lenient_value")]
+    pub settings: Settings,
 }
 
 impl Default for SaveData {
@@ -74,6 +78,7 @@ impl Default for SaveData {
             equipped_gadget: GadgetId::Thumper,
             muted: false,
             best_laps: HashMap::new(),
+            settings: Settings::default(),
         }
     }
 }
@@ -145,6 +150,7 @@ impl SaveData {
     /// Repairs any inconsistency: restores starter items, drops unknown and
     /// duplicate entries, makes selections valid, and clamps upgrade levels.
     pub fn sanitize(&mut self) {
+        self.settings.sanitize();
         self.owned_cars = normalize(&CarId::ALL, &self.owned_cars, |c| car_spec(c).is_starter());
         self.owned_paints = normalize(&PaintId::ALL, &self.owned_paints, PaintId::is_starter);
         self.owned_gadgets = normalize(&GadgetId::ALL, &self.owned_gadgets, GadgetId::is_starter);
@@ -585,5 +591,36 @@ mod tests {
         assert!(!d.submit_lap(TrackId::GlacierPass, f32::NAN));
         assert_eq!(d.best_lap(TrackId::GlacierPass), Some(65.5));
         assert_eq!(d.best_lap(TrackId::OrchardRing), None);
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use crate::core::settings::{Action, PixelSize};
+
+    #[test]
+    fn old_saves_without_settings_load_defaults() {
+        let parsed: SaveData = toml::from_str("credits = 12\nmuted = true\n").unwrap();
+        assert_eq!(parsed.credits, 12);
+        assert_eq!(parsed.settings, Settings::default());
+    }
+
+    #[test]
+    fn settings_roundtrip_and_malformed_tables_fall_back() {
+        let mut d = SaveData::default();
+        d.settings.pixel_size = PixelSize::Smaller;
+        d.settings.keys.assign(Action::Throttle, "KeyI").unwrap();
+        let back: SaveData = toml::from_str(&toml::to_string(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
+
+        let bad: SaveData = toml::from_str("credits = 3\nsettings = 7\n").unwrap();
+        assert_eq!((bad.credits, bad.settings), (3, Settings::default()));
+
+        let mut loud: SaveData =
+            toml::from_str("[settings]\nmaster_volume = 200\n[settings.keys]\ndrift = \"Escape\"\n").unwrap();
+        loud.sanitize();
+        assert_eq!(loud.settings.master_volume, 100);
+        assert_eq!(loud.settings.keys.drift, "Space");
     }
 }
