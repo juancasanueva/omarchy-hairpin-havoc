@@ -5,9 +5,13 @@ A top-down pixel-art arcade racer for [Omarchy](https://omarchy.org), written in
 grab lucky boxes, and fire gadgets at three rivals across four circuits — or chase your own
 ghost in Time Trial. Menus follow your active Omarchy theme.
 
+![Hairpin Havoc: a stacked 3D car firing nitro across the Orchard Ring start line](docs/screenshot.png)
+
 ## Quick path
 
 ```bash
+git clone https://github.com/juancasanueva/omarchy-hairpin-havoc.git
+cd omarchy-hairpin-havoc
 make install      # builds release and installs for the current user (~/.local)
 hairpin-havoc     # or launch "Hairpin Havoc" from the Omarchy app launcher
 ```
