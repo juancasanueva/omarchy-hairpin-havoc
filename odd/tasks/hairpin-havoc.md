@@ -87,6 +87,9 @@ procedural audio.
   (single translucent sprite) with a nose-down drop-in strip, garage and title previews.
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
+- Play-test (user): stacked 3D cars approved; keyboard steering was too twitchy → softened
+  (STEER_GAIN 0.45, ramp 5/s, 55% steering at top speed); user confirmed "much better".
+
 ## Next step
 Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
 drift feel, AI pace per track.
