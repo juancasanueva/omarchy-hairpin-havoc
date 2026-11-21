@@ -1,9 +1,703 @@
-//! Placeholder; implemented by a dedicated work unit.
+//! Lucky boxes, box items and gadgets: the Bevy adapter over `core::items`.
+//!
+//! Only the player's racer (the one carrying a `Loadout`) collects boxes and
+//! fires gadgets, but every effect can hit any racer.
+
+use std::f32::consts::TAU;
 
 use bevy::prelude::*;
+
+use crate::core::car::{CarModifiers, DT};
+use crate::core::economy::{BoxItem, GadgetId, roll_box_item};
+use crate::core::items::{self as rules, Hit, Slick};
+use crate::core::tracks::track_def;
+
+use super::audio::{PlaySfx, Sfx};
+use super::meshes::MeshBuilder;
+use super::pixel::WORLD_LAYER;
+use super::race::{CurrentTrack, Loadout, Phase, RaceSession, RaceSet, Racer, Toast};
+use super::{AppState, RaceMode};
+
+const BOX_Z: f32 = 15.0;
+const SLICK_Z: f32 = 6.0;
+const RING_Z: f32 = 30.0;
+const RING_LIFE: f32 = 0.45;
+const PHANTOM_ALPHA: f32 = 0.45;
 
 pub struct ItemsPlugin;
 
 impl Plugin for ItemsPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ItemsState>()
+            .add_systems(Startup, init_assets)
+            .add_systems(OnEnter(AppState::Race), reset_state)
+            .add_systems(
+                FixedUpdate,
+                use_gadget_or_item
+                    .after(RaceSet::Input)
+                    .before(RaceSet::Simulate)
+                    .run_if(in_state(AppState::Race)),
+            )
+            .add_systems(
+                FixedUpdate,
+                (tick_loadout, ram_contacts, slick_hits, box_pickups)
+                    .chain()
+                    .after(RaceSet::Simulate)
+                    .before(RaceSet::Post)
+                    .run_if(in_state(AppState::Race)),
+            )
+            .add_systems(
+                Update,
+                (queue_use, spawn_boxes, animate_boxes, animate_rings, phantom_fade)
+                    .run_if(in_state(AppState::Race)),
+            );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State and components
+// ---------------------------------------------------------------------------
+
+/// Per-race item bookkeeping; reset on every race start.
+#[derive(Resource, Default)]
+struct ItemsState {
+    boxes_spawned: bool,
+    /// A use key was pressed since the last fixed step.
+    use_pending: bool,
+    /// Player position at the end of the previous fixed step (swept pickups).
+    prev_pos: Option<Vec2>,
+    /// Lap index at which the player last collected each station.
+    collected: Vec<i32>,
+    slicks: Vec<Slick>,
+    /// Visual entity of each slick, parallel to `slicks`.
+    slick_entities: Vec<Entity>,
+    /// Racer slots already rammed during the current battering boost.
+    ram_hits: Vec<usize>,
+    rng: u32,
+}
+
+/// Meshes and material shared by all boxes and slicks.
+#[derive(Resource)]
+struct ItemAssets {
+    material: Handle<ColorMaterial>,
+    crate_mesh: Handle<Mesh>,
+    shadow_mesh: Handle<Mesh>,
+    slick_mesh: Handle<Mesh>,
+}
+
+#[derive(Component)]
+struct LuckyBox {
+    station: usize,
+    pos: Vec2,
+    /// Seconds until the box reappears (0 = available).
+    hidden: f32,
+}
+
+/// The bobbing crate child of a `LuckyBox`.
+#[derive(Component)]
+struct BoxCrate {
+    phase: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RingKind {
+    Thumper,
+    Static,
+}
+
+/// Expanding shockwave visual.
+#[derive(Component)]
+struct Ring {
+    kind: RingKind,
+    age: f32,
+    radius: f32,
+    mesh: Handle<Mesh>,
+    material: Handle<ColorMaterial>,
+}
+
+/// What firing a gadget or item produced, flushed by the calling system.
+#[derive(Default)]
+struct Feedback {
+    sfx: Vec<Sfx>,
+    toasts: Vec<String>,
+    rings: Vec<(Vec2, f32, RingKind)>,
+    slicks: Vec<(Vec2, usize)>,
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+fn init_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.insert_resource(ItemAssets {
+        material: materials.add(ColorMaterial::default()),
+        crate_mesh: meshes.add(crate_mesh()),
+        shadow_mesh: meshes.add(ellipse_mesh(Vec2::new(1.5, -11.0), 10.0, 3.5, Color::srgba(0.0, 0.0, 0.0, 0.32))),
+        slick_mesh: meshes.add(slick_mesh()),
+    });
+}
+
+fn reset_state(mut state: ResMut<ItemsState>) {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0x5eed);
+    *state = ItemsState { rng: seed | 1, ..default() };
+}
+
+fn spawn_boxes(
+    mut commands: Commands,
+    mut state: ResMut<ItemsState>,
+    assets: Res<ItemAssets>,
+    track: Option<Res<CurrentTrack>>,
+    session: Option<Res<RaceSession>>,
+) {
+    if state.boxes_spawned {
+        return;
+    }
+    let (Some(track), Some(session)) = (track, session) else { return };
+    state.boxes_spawned = true;
+    if session.mode != RaceMode::Race {
+        return;
+    }
+    let stations = track_def(track.id).box_stations;
+    state.collected = vec![i32::MIN; stations.len()];
+    let len = track.track.length();
+    for (station, frac) in stations.iter().enumerate() {
+        let (center, tangent) = track.track.main.sample_at(frac * len);
+        for (side, pos) in rules::station_boxes(center, tangent).into_iter().enumerate() {
+            commands
+                .spawn((
+                    LuckyBox { station, pos, hidden: 0.0 },
+                    Mesh2d(assets.shadow_mesh.clone()),
+                    MeshMaterial2d(assets.material.clone()),
+                    Transform::from_xyz(pos.x.round(), pos.y.round(), BOX_Z),
+                    Visibility::Visible,
+                    WORLD_LAYER,
+                    DespawnOnExit(AppState::Race),
+                ))
+                .with_child((
+                    BoxCrate { phase: station as f32 * 1.7 + side as f32 * 0.9 },
+                    Mesh2d(assets.crate_mesh.clone()),
+                    MeshMaterial2d(assets.material.clone()),
+                    Transform::from_xyz(0.0, 0.0, 0.5),
+                    WORLD_LAYER,
+                ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Use (gadget or held item)
+// ---------------------------------------------------------------------------
+
+fn queue_use(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<ItemsState>) {
+    if keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyQ) {
+        state.use_pending = true;
+    }
+}
+
+enum Action {
+    Item(BoxItem),
+    Gadget(GadgetId),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn use_gadget_or_item(
+    mut commands: Commands,
+    mut state: ResMut<ItemsState>,
+    assets: Res<ItemAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    session: Res<RaceSession>,
+    mut racers: Query<(&mut Racer, Option<&mut Loadout>)>,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut toasts: MessageWriter<Toast>,
+) {
+    // Gadgets are off in Time Trial so ghost lap times stay comparable.
+    if !std::mem::take(&mut state.use_pending)
+        || session.phase != Phase::Running
+        || session.mode != RaceMode::Race
+    {
+        return;
+    }
+    let mut list: Vec<_> = racers.iter_mut().collect();
+    let Some(pi) = list.iter().position(|(_, l)| l.is_some()) else { return };
+    let action = {
+        let Some(lo) = list[pi].1.as_mut() else { return };
+        if let Some(item) = lo.item.take() {
+            Action::Item(item)
+        } else if lo.cooldown <= 0.0 {
+            lo.cooldown = lo.gadget.cooldown();
+            lo.active = lo.gadget.active();
+            Action::Gadget(lo.gadget)
+        } else {
+            return;
+        }
+    };
+    let mut rs: Vec<Mut<Racer>> = list.into_iter().map(|(r, _)| r).collect();
+    let mut fb = Feedback::default();
+    match action {
+        Action::Item(BoxItem::Thumper) | Action::Gadget(GadgetId::Thumper) => fire_thumper(&mut rs, pi, &mut fb),
+        Action::Item(BoxItem::Slick) | Action::Gadget(GadgetId::Slick) => {
+            fb.slicks.push((rules::slick_drop_pos(&rs[pi].state), rs[pi].slot));
+            fb.sfx.push(Sfx::Slick);
+        }
+        Action::Item(BoxItem::Jammer) => fire_jammer(&mut rs, pi, &mut fb),
+        Action::Gadget(GadgetId::StaticBurst) => fire_static(&mut rs, pi, &mut fb),
+        Action::Gadget(GadgetId::BatteringBoost) => {
+            let user = &mut *rs[pi];
+            rules::battering_start(&mut user.state);
+            user.mods.ramming = true;
+            state.ram_hits.clear();
+            fb.sfx.push(Sfx::BatteringBoost);
+        }
+        Action::Gadget(GadgetId::AllTerrain) => {
+            let user = &mut *rs[pi];
+            rules::all_terrain_start(&mut user.state);
+            user.mods.all_terrain = true;
+            fb.sfx.push(Sfx::AllTerrain);
+        }
+        Action::Gadget(GadgetId::Phantom) => {
+            rs[pi].mods.phantom = true;
+            fb.sfx.push(Sfx::Phantom);
+        }
+        Action::Gadget(GadgetId::DriftSurge) => {
+            rs[pi].mods.drift_surge = true;
+            fb.sfx.push(Sfx::DriftSurge);
+        }
+    }
+
+    for s in fb.sfx {
+        sfx.write(PlaySfx(s));
+    }
+    for t in fb.toasts {
+        toasts.write(Toast(t));
+    }
+    for (pos, radius, kind) in fb.rings {
+        let mesh = meshes.add(ring_mesh(4.0, kind, 0));
+        let material = materials.add(ColorMaterial::default());
+        commands.spawn((
+            Ring { kind, age: 0.0, radius, mesh: mesh.clone(), material: material.clone() },
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            Transform::from_xyz(pos.x.round(), pos.y.round(), RING_Z),
+            WORLD_LAYER,
+            DespawnOnExit(AppState::Race),
+        ));
+    }
+    for (pos, owner) in fb.slicks {
+        drop_slick(&mut commands, &mut state, &assets, pos, owner);
+    }
+}
+
+fn others(len: usize, pi: usize) -> impl Iterator<Item = usize> {
+    (0..len).filter(move |&j| j != pi)
+}
+
+/// Credits the player for rivals its effects spun out.
+fn award_spinouts(player: &mut Racer, count: usize, fb: &mut Feedback) {
+    if count == 0 {
+        return;
+    }
+    let points = rules::SPINOUT_POINTS * count as f32;
+    player.drift_points += points;
+    fb.toasts.push(if count == 1 {
+        format!("SPINOUT! +{points:.0}")
+    } else {
+        format!("SPINOUT x{count}! +{points:.0}")
+    });
+}
+
+fn fire_thumper(rs: &mut [Mut<Racer>], pi: usize, fb: &mut Feedback) {
+    let pos = rs[pi].state.pos;
+    let mut spun = 0;
+    for j in others(rs.len(), pi) {
+        if rules::thumper_hit(pos, &mut rs[j].state) == Hit::SpunOut {
+            spun += 1;
+        }
+    }
+    rules::thumper_self(&mut rs[pi].state);
+    fb.sfx.push(Sfx::Thumper);
+    fb.rings.push((pos, rules::THUMPER_RADIUS, RingKind::Thumper));
+    if spun > 0 {
+        fb.sfx.push(Sfx::Spinout);
+    }
+    award_spinouts(&mut rs[pi], spun, fb);
+}
+
+fn fire_static(rs: &mut [Mut<Racer>], pi: usize, fb: &mut Feedback) {
+    let pos = rs[pi].state.pos;
+    let hits = others(rs.len(), pi)
+        .filter(|&j| rules::static_hit(pos, &mut rs[j].state).landed())
+        .count();
+    fb.sfx.push(Sfx::StaticBurst);
+    fb.rings.push((pos, rules::STATIC_RADIUS, RingKind::Static));
+    if hits > 0 {
+        let points = rules::STATIC_POINTS * hits as f32;
+        rs[pi].drift_points += points;
+        fb.toasts.push(format!("ZAPPED x{hits} +{points:.0}"));
+    }
+}
+
+fn fire_jammer(rs: &mut [Mut<Racer>], pi: usize, fb: &mut Feedback) {
+    fb.sfx.push(Sfx::Jammer);
+    let rivals: Vec<(usize, f32)> = others(rs.len(), pi).map(|j| (j, rs[j].lap.total)).collect();
+    if let Some(j) = rules::jammer_target(rs[pi].lap.total, &rivals) {
+        rules::jammer_hit(&mut rs[j].state);
+        fb.toasts.push(format!("JAMMED {}", rs[j].name.to_uppercase()));
+    }
+}
+
+fn drop_slick(commands: &mut Commands, state: &mut ItemsState, assets: &ItemAssets, pos: Vec2, owner: usize) {
+    let spin = rules::next_rand(&mut state.rng) as f32 / u32::MAX as f32 * TAU;
+    let entity = commands
+        .spawn((
+            Mesh2d(assets.slick_mesh.clone()),
+            MeshMaterial2d(assets.material.clone()),
+            Transform::from_xyz(pos.x.round(), pos.y.round(), SLICK_Z).with_rotation(Quat::from_rotation_z(spin)),
+            WORLD_LAYER,
+            DespawnOnExit(AppState::Race),
+        ))
+        .id();
+    let removed = rules::push_slick(&mut state.slicks, Slick::new(pos, owner));
+    state.slick_entities.push(entity);
+    for e in state.slick_entities.drain(..removed) {
+        commands.entity(e).despawn();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Post-physics: timers, rams, slicks, pickups
+// ---------------------------------------------------------------------------
+
+fn clear_gadget_flag(mods: &mut CarModifiers, gadget: GadgetId) {
+    match gadget {
+        GadgetId::BatteringBoost => mods.ramming = false,
+        GadgetId::AllTerrain => mods.all_terrain = false,
+        GadgetId::Phantom => mods.phantom = false,
+        GadgetId::DriftSurge => mods.drift_surge = false,
+        GadgetId::Thumper | GadgetId::Slick | GadgetId::StaticBurst => {}
+    }
+}
+
+fn tick_loadout(mut q: Query<(&mut Racer, &mut Loadout)>) {
+    for (mut r, mut lo) in &mut q {
+        if lo.cooldown > 0.0 {
+            lo.cooldown = (lo.cooldown - DT).max(0.0);
+        }
+        if lo.active > 0.0 {
+            lo.active -= DT;
+            if lo.active <= 0.0 {
+                lo.active = 0.0;
+                let gadget = lo.gadget;
+                clear_gadget_flag(&mut r.mods, gadget);
+            }
+        }
+    }
+}
+
+fn pair_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
+    debug_assert_ne!(i, j);
+    if i < j {
+        let (a, b) = v.split_at_mut(j);
+        (&mut a[i], &mut b[0])
+    } else {
+        let (a, b) = v.split_at_mut(i);
+        (&mut b[0], &mut a[j])
+    }
+}
+
+fn ram_contacts(
+    mut state: ResMut<ItemsState>,
+    mut racers: Query<(&mut Racer, Option<&Loadout>)>,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut toasts: MessageWriter<Toast>,
+) {
+    let mut list: Vec<_> = racers.iter_mut().collect();
+    let Some(pi) = list
+        .iter()
+        .position(|(r, l)| r.mods.ramming && l.is_some_and(|l| l.active > 0.0))
+    else {
+        return;
+    };
+    let mut fb = Feedback::default();
+    let mut spun = 0;
+    for j in others(list.len(), pi) {
+        let ((user, _), (target, _)) = pair_mut(&mut list, pi, j);
+        if target.mods.phantom || state.ram_hits.contains(&target.slot) {
+            continue;
+        }
+        match rules::ram_hit(&mut user.state, &mut target.state) {
+            Hit::Miss => {}
+            hit => {
+                state.ram_hits.push(target.slot);
+                fb.sfx.push(Sfx::Spinout);
+                if hit == Hit::SpunOut {
+                    spun += 1;
+                }
+            }
+        }
+    }
+    award_spinouts(&mut list[pi].0, spun, &mut fb);
+    for s in fb.sfx {
+        sfx.write(PlaySfx(s));
+    }
+    for t in fb.toasts {
+        toasts.write(Toast(t));
+    }
+}
+
+fn slick_hits(
+    mut commands: Commands,
+    mut state: ResMut<ItemsState>,
+    mut racers: Query<&mut Racer>,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut toasts: MessageWriter<Toast>,
+) {
+    if state.slicks.is_empty() {
+        return;
+    }
+    let mut list: Vec<Mut<Racer>> = racers.iter_mut().collect();
+    // (owner slot, rival newly spun) pairs for scoring.
+    let mut spun_by: Vec<usize> = Vec::new();
+    let mut any_hit = false;
+    for slick in state.slicks.iter_mut() {
+        slick.age += DT;
+        for r in list.iter_mut() {
+            let r = &mut **r;
+            let hit = slick.try_hit(r.slot, &mut r.state);
+            any_hit |= hit.landed();
+            if hit == Hit::SpunOut && !r.is_player {
+                spun_by.push(slick.owner);
+            }
+        }
+    }
+    let mut fb = Feedback::default();
+    if any_hit {
+        fb.sfx.push(Sfx::Spinout);
+    }
+    if let Some(player) = list.iter_mut().find(|r| r.is_player) {
+        let slot = player.slot;
+        let count = spun_by.iter().filter(|&&o| o == slot).count();
+        award_spinouts(player, count, &mut fb);
+    }
+    for s in fb.sfx {
+        sfx.write(PlaySfx(s));
+    }
+    for t in fb.toasts {
+        toasts.write(Toast(t));
+    }
+
+    // Drop expired slicks and their visuals.
+    let st = &mut *state;
+    let mut i = 0;
+    while i < st.slicks.len() {
+        if st.slicks[i].expired() {
+            st.slicks.remove(i);
+            commands.entity(st.slick_entities.remove(i)).despawn();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn box_pickups(
+    mut state: ResMut<ItemsState>,
+    track: Res<CurrentTrack>,
+    session: Res<RaceSession>,
+    mut players: Query<(&Racer, &mut Loadout)>,
+    mut boxes: Query<&mut LuckyBox>,
+    mut sfx: MessageWriter<PlaySfx>,
+    mut toasts: MessageWriter<Toast>,
+) {
+    for mut b in &mut boxes {
+        if b.hidden > 0.0 {
+            b.hidden = (b.hidden - DT).max(0.0);
+        }
+    }
+    let st = &mut *state;
+    for (r, mut lo) in &mut players {
+        let cur = r.state.pos;
+        let prev = st.prev_pos.replace(cur).unwrap_or(cur);
+        if session.phase != Phase::Running || lo.item.is_some() {
+            continue;
+        }
+        let lap = rules::lap_index(r.lap.total, track.track.length());
+        for mut b in &mut boxes {
+            let taken = st.collected.get(b.station).is_none_or(|&l| l == lap);
+            if b.hidden > 0.0 || taken || !rules::segment_hits_circle(prev, cur, b.pos, rules::BOX_RADIUS) {
+                continue;
+            }
+            b.hidden = rules::BOX_RESPAWN;
+            st.collected[b.station] = lap;
+            let item = roll_box_item(rules::next_rand(&mut st.rng), lo.last_item, lo.gadget);
+            lo.item = Some(item);
+            lo.last_item = Some(item);
+            sfx.write(PlaySfx(Sfx::ItemPickup));
+            toasts.write(Toast(item.name().to_string()));
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+fn animate_boxes(
+    time: Res<Time>,
+    mut roots: Query<(&LuckyBox, &mut Visibility)>,
+    mut crates: Query<(&BoxCrate, &mut Transform)>,
+) {
+    for (b, mut vis) in &mut roots {
+        let want = if b.hidden > 0.0 { Visibility::Hidden } else { Visibility::Visible };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    let t = time.elapsed_secs();
+    for (c, mut tf) in &mut crates {
+        tf.translation.y = ((t * 3.2 + c.phase).sin() * 2.5).round();
+        tf.rotation = Quat::from_rotation_z((t * 1.9 + c.phase).sin() * 0.22);
+    }
+}
+
+fn animate_rings(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut rings: Query<(Entity, &mut Ring)>,
+) {
+    for (e, mut ring) in &mut rings {
+        ring.age += time.delta_secs();
+        let t = ring.age / RING_LIFE;
+        if t >= 1.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        let radius = (ring.radius * (1.0 - (1.0 - t) * (1.0 - t))).max(4.0);
+        let frame = (ring.age * 30.0) as u32;
+        let _ = meshes.insert(ring.mesh.id(), ring_mesh(radius, ring.kind, frame));
+        if let Some(mut m) = materials.get_mut(&ring.material) {
+            m.color = Color::WHITE.with_alpha((1.0 - t) * 0.9);
+        }
+    }
+}
+
+fn phantom_fade(mut q: Query<(&Racer, &mut Sprite), With<Loadout>>) {
+    for (r, mut sprite) in &mut q {
+        let want = if r.mods.phantom { PHANTOM_ALPHA } else { 1.0 };
+        if (sprite.color.alpha() - want).abs() > 0.01 {
+            sprite.color.set_alpha(want);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Procedural meshes
+// ---------------------------------------------------------------------------
+
+/// "?" glyph on a 5x7 grid, top row first.
+const GLYPH: [&str; 7] = [".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."];
+
+fn crate_mesh() -> Mesh {
+    let mut mb = MeshBuilder::default();
+    let outline = Color::srgb(0.30, 0.15, 0.05);
+    let body = Color::srgb(0.98, 0.70, 0.16);
+    let light = Color::srgb(1.0, 0.86, 0.42);
+    let dark = Color::srgb(0.84, 0.48, 0.10);
+    mb.rect(Vec2::ZERO, Vec2::X, 11.0, 11.0, outline);
+    mb.rect(Vec2::ZERO, Vec2::X, 10.0, 10.0, body);
+    mb.rect(Vec2::new(0.0, 8.5), Vec2::X, 10.0, 1.5, light);
+    mb.rect(Vec2::new(0.0, -8.5), Vec2::X, 10.0, 1.5, dark);
+    for (row, line) in GLYPH.iter().enumerate() {
+        for (col, ch) in line.chars().enumerate() {
+            if ch == '#' {
+                let c = Vec2::new(-4.0 + col as f32 * 2.0, 6.0 - row as f32 * 2.0);
+                // Drop shadow, then the white glyph cell.
+                mb.rect(c + Vec2::new(1.0, -1.0), Vec2::X, 1.0, 1.0, outline);
+                mb.rect(c, Vec2::X, 1.0, 1.0, Color::WHITE);
+            }
+        }
+    }
+    mb.build()
+}
+
+fn ellipse_mesh(c: Vec2, rx: f32, ry: f32, color: Color) -> Mesh {
+    let mut mb = MeshBuilder::default();
+    let n = 16;
+    for i in 0..n {
+        let a0 = i as f32 / n as f32 * TAU;
+        let a1 = (i + 1) as f32 / n as f32 * TAU;
+        let p = |a: f32| c + Vec2::new(a.cos() * rx, a.sin() * ry);
+        mb.tri(c, p(a0), p(a1), color);
+    }
+    mb.build()
+}
+
+fn slick_mesh() -> Mesh {
+    let mut mb = MeshBuilder::default();
+    let oil = Color::srgba(0.06, 0.05, 0.09, 0.9);
+    mb.circle(Vec2::ZERO, 16.0, 16, oil);
+    for (x, y) in [(11.0, 5.0), (-10.0, -7.0), (3.0, -12.0), (-5.0, 11.0)] {
+        mb.circle(Vec2::new(x, y), 8.0, 10, oil);
+    }
+    // Glossy sheen.
+    mb.circle(Vec2::new(-5.0, 5.0), 4.5, 10, Color::srgba(0.42, 0.40, 0.62, 0.55));
+    mb.circle(Vec2::new(6.0, -4.0), 2.5, 8, Color::srgba(0.35, 0.55, 0.55, 0.45));
+    mb.circle(Vec2::new(-6.0, 6.0), 1.5, 6, Color::srgba(0.92, 0.92, 1.0, 0.8));
+    mb.build()
+}
+
+/// Ring of the given radius; the static ring is jagged and flickers per `frame`.
+fn ring_mesh(radius: f32, kind: RingKind, frame: u32) -> Mesh {
+    let mut mb = MeshBuilder::default();
+    let (color, glow, segments) = match kind {
+        RingKind::Thumper => (Color::srgb(1.0, 0.88, 0.6), Color::srgba(1.0, 0.6, 0.25, 0.45), 40),
+        RingKind::Static => (Color::srgb(0.55, 0.98, 1.0), Color::srgba(0.2, 0.75, 1.0, 0.45), 48),
+    };
+    let mut seed = frame.wrapping_mul(0x9e37_79b9) | 1;
+    let jitter: Vec<f32> = (0..segments)
+        .map(|_| match kind {
+            RingKind::Thumper => 0.0,
+            RingKind::Static => (rules::next_rand(&mut seed) % 9) as f32 - 4.0,
+        })
+        .collect();
+    let at = |i: usize, r: f32| Vec2::from_angle(i as f32 / segments as f32 * TAU) * (r + jitter[i % segments]).max(0.0);
+    for i in 0..segments {
+        let j = i + 1;
+        // Soft outer glow band, then the bright core.
+        mb.quad(at(i, radius - 6.0), at(j, radius - 6.0), at(j, radius + 3.0), at(i, radius + 3.0), glow);
+        mb.quad(at(i, radius - 2.0), at(j, radius - 2.0), at(j, radius + 1.0), at(i, radius + 1.0), color);
+    }
+    mb.build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pair_mut_returns_requested_order() {
+        let mut v = [1, 2, 3];
+        let (a, b) = pair_mut(&mut v, 2, 0);
+        assert_eq!((*a, *b), (3, 1));
+        let (a, b) = pair_mut(&mut v, 0, 1);
+        assert_eq!((*a, *b), (1, 2));
+    }
+
+    #[test]
+    fn clearing_a_gadget_flag_leaves_others() {
+        let mut m = CarModifiers { all_terrain: true, drift_surge: true, ramming: true, phantom: true };
+        clear_gadget_flag(&mut m, GadgetId::Phantom);
+        assert!(!m.phantom && m.all_terrain && m.ramming && m.drift_surge);
+        clear_gadget_flag(&mut m, GadgetId::Thumper);
+        assert!(m.all_terrain && m.ramming && m.drift_surge);
+    }
 }

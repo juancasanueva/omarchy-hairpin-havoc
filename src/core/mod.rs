@@ -3,6 +3,7 @@ pub mod car;
 pub mod cars;
 pub mod economy;
 pub mod ghost;
+pub mod items;
 pub mod race;
 pub mod save;
 pub mod track;
