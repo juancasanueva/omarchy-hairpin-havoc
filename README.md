@@ -72,3 +72,8 @@ HAIRPIN_AUTOSTART=race HAIRPIN_AUTODRIVE=1 cargo run   # skip menus, AI drives y
 
 `src/core/` holds the pure game rules (track geometry, physics, laps, AI, economy, ghosts,
 saves). `src/game/` holds the Bevy plugins that render, play audio and read input.
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). The bundled Press Start 2P font keeps its own SIL Open Font
+License ([`assets/fonts/OFL.txt`](assets/fonts/OFL.txt)).
