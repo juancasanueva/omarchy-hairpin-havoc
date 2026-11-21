@@ -16,7 +16,15 @@ make install      # builds release and installs for the current user (~/.local)
 hairpin-havoc     # or launch "Hairpin Havoc" from the Omarchy app launcher
 ```
 
-Requirements: Rust (stable), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommon`
+Or grab the prebuilt x86_64 binary from the
+[latest release](https://github.com/juancasanueva/omarchy-hairpin-havoc/releases/latest):
+
+```bash
+tar -xzf hairpin-havoc-v*-x86_64-linux.tar.gz
+cp -r hairpin-havoc-v*-x86_64-linux/{bin,share} ~/.local/
+```
+
+Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommon`
 (all present on a standard Omarchy install). Remove with `make uninstall`.
 
 ## Controls
