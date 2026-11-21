@@ -64,6 +64,10 @@ procedural audio.
       (no per-slice outlines), single sprite per car picking the nearest heading frame,
       `facing = "down"` default for imported strips, squash as one tunable constant, and
       document `views_to_slices.py` (MIT) as an offline way to make slice strips.
+- [ ] T16 Stacked props: procedural voxel models for trees, pines, cacti, rocks, dock
+      containers and lucky-box crates, baked once per variant at track load (single outline,
+      shared compositor), lucky boxes baked into spin frames, and consistent ground-point
+      y-sorting between cars and props.
 
 ## Progress
 - All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
