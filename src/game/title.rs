@@ -35,7 +35,23 @@ impl Plugin for TitlePlugin {
         app.insert_resource(GameFont(handle))
             .add_systems(OnEnter(AppState::Title), spawn_title)
             .add_systems(OnExit(AppState::Title), despawn_title)
-            .add_systems(Update, title_input.run_if(in_state(AppState::Title)));
+            .add_systems(Update, title_input.run_if(in_state(AppState::Title)))
+            .add_systems(Startup, dev_autostart);
+    }
+}
+
+/// Development aid: `HAIRPIN_AUTOSTART=race|trial` skips the title screen.
+fn dev_autostart(mut mode: ResMut<RaceMode>, mut next: ResMut<NextState<AppState>>) {
+    match std::env::var("HAIRPIN_AUTOSTART").as_deref() {
+        Ok("race") => {
+            *mode = RaceMode::Race;
+            next.set(AppState::Race);
+        }
+        Ok("trial") => {
+            *mode = RaceMode::TimeTrial;
+            next.set(AppState::Race);
+        }
+        _ => {}
     }
 }
 

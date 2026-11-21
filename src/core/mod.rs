@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod car;
 pub mod cars;
 pub mod economy;

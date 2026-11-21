@@ -1,9 +1,16 @@
 //! Bevy adapters: app wiring, screens, rendering, input and audio.
 
 pub mod audio;
+pub mod meshes;
 pub mod palette;
 pub mod pixel;
+pub mod profile;
+pub mod race;
+pub mod results;
+pub mod sprites;
+pub mod theme;
 pub mod title;
+pub mod track_view;
 
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
@@ -47,6 +54,14 @@ pub fn build_app() -> App {
     )
     .init_state::<AppState>()
     .init_resource::<RaceMode>()
-    .add_plugins((palette::PalettePlugin, pixel::PixelPlugin, title::TitlePlugin));
+    .add_plugins((
+        palette::PalettePlugin,
+        profile::ProfilePlugin,
+        pixel::PixelPlugin,
+        audio::GameAudioPlugin,
+        title::TitlePlugin,
+        race::RacePlugin,
+        results::ResultsPlugin,
+    ));
     app
 }
