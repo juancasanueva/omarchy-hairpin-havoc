@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::car::CarTuning;
 use super::cars::CarSpec;
+use super::race::FIELD_SIZE;
 
 // ---------------------------------------------------------------------------
 // Upgrades
@@ -344,7 +345,8 @@ impl PaintId {
 // Payouts
 // ---------------------------------------------------------------------------
 
-pub const PLACE_CREDITS: [u32; 4] = [260, 170, 110, 70];
+/// Base credits per finishing place, P1 first; one entry per grid slot.
+pub const PLACE_CREDITS: [u32; FIELD_SIZE] = [260, 210, 170, 140, 115, 95, 80, 70, 65, 60];
 pub const TRIAL_BASE_CREDITS: u32 = 120;
 pub const DRIFT_POINTS_PER_CREDIT: u32 = 35;
 pub const DRIFT_BONUS_CAP: u32 = 200;
@@ -371,13 +373,14 @@ impl Payout {
     }
 }
 
-/// Credits for a finished race. `place` is 1..=4; anything outside that
-/// range pays last-place credits.
+/// Credits for a finished race. `place` is 1..=`FIELD_SIZE`; anything outside
+/// that range pays last-place credits.
 pub fn race_payout(place: u8, drift_points: u32, new_pb: bool) -> Payout {
-    let base = match place {
-        1..=4 => PLACE_CREDITS[usize::from(place) - 1],
-        _ => PLACE_CREDITS[3],
-    };
+    let base = usize::from(place)
+        .checked_sub(1)
+        .and_then(|i| PLACE_CREDITS.get(i))
+        .copied()
+        .unwrap_or(PLACE_CREDITS[FIELD_SIZE - 1]);
     Payout::new(base, drift_points, new_pb)
 }
 
@@ -532,27 +535,33 @@ mod tests {
                 total: 260
             }
         );
-        assert_eq!(race_payout(2, 350, false).total, 170 + 10);
+        assert_eq!(race_payout(2, 350, false).total, 210 + 10);
         assert_eq!(
             race_payout(3, 34, true),
             Payout {
-                base: 110,
+                base: 170,
                 drift: 0,
                 pb: 90,
-                total: 200
+                total: 260
             }
         );
         assert_eq!(
             race_payout(4, 1_000_000, true),
             Payout {
-                base: 70,
+                base: 140,
                 drift: 200,
                 pb: 90,
-                total: 360
+                total: 430
             }
         );
-        assert_eq!(race_payout(0, 0, false).base, 70);
-        assert_eq!(race_payout(9, 0, false).base, 70);
+        assert_eq!(race_payout(10, 0, false).base, 60);
+        assert_eq!(race_payout(0, 0, false).base, 60);
+        assert_eq!(race_payout(11, 0, false).base, 60);
+    }
+
+    #[test]
+    fn every_place_pays_less_than_the_one_ahead() {
+        assert!(PLACE_CREDITS.windows(2).all(|w| w[0] > w[1]));
     }
 
     #[test]

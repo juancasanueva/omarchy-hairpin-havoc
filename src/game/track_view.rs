@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 
+use crate::core::race::FIELD_SIZE;
 use crate::core::track::{Path, Track};
 
 use super::meshes::MeshBuilder;
@@ -193,7 +194,7 @@ pub fn spawn_track_view(
             paint.rect(c, s0.tangent, 3.0, 3.0, if white { Color::WHITE } else { Color::BLACK });
         }
     }
-    for slot in 0..4 {
+    for slot in 0..FIELD_SIZE {
         let (pos, dir) = grid_slot(track, slot);
         // A short line marking the front of each grid box.
         paint.rect(pos + dir * 16.0, dir.perp(), 12.0, 1.0, theme.line);
@@ -272,7 +273,7 @@ fn spawn_prop(commands: &mut Commands, baked: &BakedProp, p: Vec2, shadow: Color
 
 /// Grid position and facing for starting slot `slot` (0 = pole).
 pub fn grid_slot(track: &Track, slot: usize) -> (Vec2, Vec2) {
-    let back = 48.0 + 46.0 * slot as f32;
+    let back = 48.0 + 36.0 * slot as f32;
     let (p, t) = track.main.sample_at(track.length() - back);
     let lateral = if slot.is_multiple_of(2) { 20.0 } else { -20.0 };
     (p + t.perp() * lateral, t)

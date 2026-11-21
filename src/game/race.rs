@@ -6,7 +6,7 @@ use crate::core::ai::{self, AiBrain};
 use crate::core::car::{self, CarInput, CarModifiers, CarState, CarTuning, DT};
 use crate::core::cars::{CarId, car_spec};
 use crate::core::economy::{BoxItem, GadgetId, PaintId};
-use crate::core::race::{LapEvent, LapTracker, standings};
+use crate::core::race::{FIELD_SIZE, LapEvent, LapTracker, PLAYER_GRID_SLOT, standings};
 use crate::core::settings::Action;
 use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
@@ -51,7 +51,7 @@ pub struct Racer {
     pub slot: usize,
     pub is_player: bool,
     pub car: CarId,
-    pub name: &'static str,
+    pub name: String,
     pub tuning: CarTuning,
     pub state: CarState,
     pub input: CarInput,
@@ -99,7 +99,7 @@ pub struct RaceOutcome {
 
 #[derive(Clone, Debug)]
 pub struct OutcomeRow {
-    pub name: &'static str,
+    pub name: String,
     pub is_player: bool,
     pub finished_at: Option<f32>,
 }
@@ -113,12 +113,12 @@ fn snapshot(mode: RaceMode, track: TrackId, racers: &[&Racer]) -> Option<RaceOut
         rows: order
             .iter()
             .map(|&i| OutcomeRow {
-                name: racers[i].name,
+                name: racers[i].name.clone(),
                 is_player: racers[i].is_player,
                 finished_at: racers[i].lap.finished_at,
             })
             .collect(),
-        place: order.iter().position(|&i| racers[i].is_player).map_or(4, |p| p + 1) as u8,
+        place: order.iter().position(|&i| racers[i].is_player).map_or(FIELD_SIZE, |p| p + 1) as u8,
         lap_times: player.lap.lap_times.clone(),
         best_lap: player.lap.best_lap,
         drift_points: player.drift_points,
@@ -185,25 +185,17 @@ fn setup_race(
     spawn_track_view(&mut commands, &mut meshes, &mut materials, &mut images, &track, &theme, 0x9e37 + id.index() as u32 * 7919);
 
     let player_car = profile.data.selected_car;
-    let mut field: Vec<(CarId, bool)> = Vec::new();
-    if *mode == RaceMode::Race {
-        // Rivals use other cars, rotated per track so each circuit has a different field.
-        let rivals: Vec<CarId> = CarId::ALL
-            .iter()
-            .copied()
-            .filter(|&c| c != player_car)
-            .cycle()
-            .skip(id.index() * 2)
-            .take(3)
-            .collect();
-        field.extend([(rivals[0], false), (rivals[1], false), (player_car, true), (rivals[2], false)]);
-    } else {
-        field.push((player_car, true));
-    }
+    let player = Entrant {
+        car: player_car,
+        paint: profile.data.paint_for(player_car),
+        name: car_spec(player_car).name.to_string(),
+        is_player: true,
+    };
+    let field = if *mode == RaceMode::Race { race_field(player, id.index()) } else { vec![player] };
 
-    for (slot, &(car, is_player)) in field.iter().enumerate() {
+    for (slot, entrant) in field.into_iter().enumerate() {
+        let Entrant { car, paint, name, is_player } = entrant;
         let spec = car_spec(car);
-        let paint = if is_player { profile.data.paint_for(car) } else { PaintId::Factory };
         let art = StackArt::new(&car_slices(car, paint), &mut images);
         let (pos, dir) = grid_slot(&track, slot);
         let state = CarState::new(pos, dir.to_angle());
@@ -217,7 +209,7 @@ fn setup_race(
                 slot,
                 is_player,
                 car,
-                name: spec.name,
+                name,
                 tuning,
                 state,
                 input: CarInput::default(),
@@ -488,12 +480,52 @@ fn race_keys(
     }
 }
 
+/// One car on the starting grid.
+struct Entrant {
+    car: CarId,
+    paint: PaintId,
+    name: String,
+    is_player: bool,
+}
+
+/// The race grid: `FIELD_SIZE - 1` rivals around the player at
+/// [`PLAYER_GRID_SLOT`]. Rivals use the other cars, rotated per track so each
+/// circuit has a different field; there are fewer cars than rivals, so a car's
+/// repeat entries get another paint scheme and a numbered name.
+fn race_field(player: Entrant, track_index: usize) -> Vec<Entrant> {
+    const SUFFIXES: [&str; 4] = ["", " II", " III", " IV"];
+    let player_car = player.car;
+    let mut seen: Vec<CarId> = Vec::new();
+    let mut field: Vec<Entrant> = CarId::ALL
+        .iter()
+        .copied()
+        .filter(|&c| c != player_car)
+        .cycle()
+        .skip(track_index * 2)
+        .take(FIELD_SIZE - 1)
+        .enumerate()
+        .map(|(i, car)| {
+            let repeat = seen.iter().filter(|&&c| c == car).count();
+            seen.push(car);
+            let paint = if repeat == 0 { PaintId::Factory } else { PaintId::ALL[1 + i % (PaintId::ALL.len() - 1)] };
+            let suffix = SUFFIXES[repeat.min(SUFFIXES.len() - 1)];
+            Entrant { car, paint, name: format!("{}{suffix}", car_spec(car).name), is_player: false }
+        })
+        .collect();
+    field.insert(PLAYER_GRID_SLOT.min(field.len()), player);
+    field
+}
+
 /// World z of the car in `slot` standing at ground `y`: y-sorted with the
 /// props and lucky boxes through the shared [`ground_z`]. Cars on the same row
 /// keep slot order; each car is one baked sprite, so stacks never interleave.
 fn car_z(slot: usize, y: f32) -> f32 {
-    ground_z(CAR_SORT + slot as f32 * SORT_STEP / 8.0, y)
+    ground_z(CAR_SORT + slot as f32 * CAR_SLOT_STEP, y)
 }
+
+/// z between grid slots on one ground row. The whole field (plus a flame's
+/// `ATTACH_Z`) stays below `PROP_SORT`, so props on the row still draw in front.
+const CAR_SLOT_STEP: f32 = SORT_STEP / 32.0;
 
 fn sync_visuals(mut q: Query<(&Racer, &mut Transform, &mut StackPose)>) {
     for (r, mut tf, mut pose) in &mut q {
@@ -572,5 +604,41 @@ mod tests {
         assert_eq!(order, vec![2, 0, 3, 1]);
         // Any car one row lower is in front of every car on the row above.
         assert!(car_z(0, 9.0) > car_z(3, 10.0));
+    }
+
+    #[test]
+    fn the_whole_field_sorts_below_props_on_its_row() {
+        use super::super::stack::{ATTACH_Z, PROP_SORT};
+        let last = car_z(FIELD_SIZE - 1, 7.0);
+        assert!(last + ATTACH_Z < ground_z(PROP_SORT, 7.0));
+        assert!(car_z(0, 6.0) > last, "one row lower still draws in front");
+    }
+
+    fn player() -> Entrant {
+        Entrant { car: CarId::ALL[0], paint: PaintId::Factory, name: "You".into(), is_player: true }
+    }
+
+    #[test]
+    fn race_field_fills_the_grid_around_the_player() {
+        for track in 0..4 {
+            let field = race_field(player(), track);
+            assert_eq!(field.len(), FIELD_SIZE);
+            assert!(field[PLAYER_GRID_SLOT].is_player);
+            assert_eq!(field.iter().filter(|e| e.is_player).count(), 1);
+            assert!(field.iter().filter(|e| !e.is_player).all(|e| e.car != CarId::ALL[0]));
+        }
+    }
+
+    #[test]
+    fn repeated_rivals_look_and_read_different() {
+        let field = race_field(player(), 0);
+        for (i, a) in field.iter().enumerate() {
+            for b in &field[i + 1..] {
+                assert_ne!(a.name, b.name);
+                if a.car == b.car {
+                    assert_ne!(a.paint, b.paint);
+                }
+            }
+        }
     }
 }

@@ -5,6 +5,11 @@
 
 use std::cmp::Ordering;
 
+/// Cars on the grid in a race: the player plus `FIELD_SIZE - 1` rivals.
+pub const FIELD_SIZE: usize = 10;
+/// Grid slot the player starts from (0 = pole), mid-pack.
+pub const PLAYER_GRID_SLOT: usize = 5;
+
 pub const SPLITS: [f32; 2] = [1.0 / 3.0, 2.0 / 3.0];
 /// Largest believable progress change per update; larger jumps are ignored.
 const MAX_STEP: f32 = 250.0;
