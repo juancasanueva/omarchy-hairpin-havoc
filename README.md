@@ -2,7 +2,7 @@
 
 A top-down pixel-art arcade racer for [Omarchy](https://omarchy.org), written in Rust with
 [Bevy](https://bevyengine.org). Drift to charge mini-turbos, burn nitro on the straights,
-grab lucky boxes, and fire gadgets at three rivals across four circuits — or chase your own
+grab lucky boxes, and fire gadgets at nine rivals across four circuits — or chase your own
 ghost in Time Trial. Menus follow your active Omarchy theme.
 
 ![Hairpin Havoc: a stacked 3D car firing nitro across the Orchard Ring start line](docs/screenshot.png)
