@@ -55,6 +55,10 @@ procedural audio.
 - [x] T11 Time trial + ghosts: recording, playback, PB, ghost codes, clipboard.
 - [x] T12 Audio: procedural engine synth per car + SFX.
 - [x] T13 Omarchy integration: .desktop entry, install target, README.
+- [ ] T14 Sprite-stacked 3D-looking cars: procedural voxel car models sliced into layers,
+      stacked rendering (rotate all slices, lift 1 px each, vertical squash), ghosts and
+      phantom fade on stacks, stacked previews in menus, and drop-in slice strips exported
+      from the SpriteCook sprite stack generator (`assets/cars/<car-key>.png` + optional toml).
 
 ## Progress
 - All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
@@ -66,5 +70,5 @@ procedural audio.
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 ## Next step
-Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
+T14 (user request: 3D-looking stacked car sprites). Then human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
 drift feel, AI pace per track.
