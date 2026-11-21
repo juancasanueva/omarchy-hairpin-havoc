@@ -56,6 +56,15 @@ const HANDBRAKE_DRAG: f32 = 170.0;
 const BOOST_FORCE: f32 = 190.0;
 const WHEELBASE: f32 = 42.0;
 const MAX_STEER: f32 = 0.55;
+/// Fraction of `MAX_STEER` used by the bicycle model; lower = gentler turning.
+const STEER_GAIN: f32 = 0.45;
+/// Steering wheel speeds (per second): building lock, returning to centre, countersteering.
+/// Keyboard input is all-or-nothing, so a slow build lets taps give partial lock.
+const STEER_RATE_IN: f32 = 5.0;
+const STEER_RATE_CENTER: f32 = 9.0;
+const STEER_RATE_COUNTER: f32 = 14.0;
+/// Remaining steering at top speed (1.0 = no reduction).
+const STEER_AT_TOP_SPEED: f32 = 0.55;
 const DRIFT_TIERS: [f32; 3] = [0.32, 0.66, 0.95];
 const DRIFT_BOOST: [f32; 3] = [0.45, 0.75, 1.05];
 const NITRO_MIN: f32 = 0.08;
@@ -347,11 +356,11 @@ pub fn step(
     // Steering with asymmetric rates.
     let target = if spinning { 0.0 } else { shape_steer(input.steer) };
     let rate = if target == 0.0 {
-        15.0
+        STEER_RATE_CENTER
     } else if target.signum() != car.steer.signum() && car.steer != 0.0 {
-        22.0
+        STEER_RATE_COUNTER
     } else {
-        11.5
+        STEER_RATE_IN
     };
     car.steer = approach(car.steer, target, rate * DT);
     let sign = input.steer.signum();
@@ -529,9 +538,9 @@ pub fn step(
         } else if speed <= 260.0 {
             1.0
         } else {
-            1.0 - 0.32 * ((speed - 260.0) / (465.0 - 260.0)).min(1.0)
+            1.0 - (1.0 - STEER_AT_TOP_SPEED) * ((speed - 260.0) / (465.0 - 260.0)).min(1.0)
         };
-        let angle = car.steer * MAX_STEER * 0.6;
+        let angle = car.steer * MAX_STEER * STEER_GAIN;
         let mut target_yaw = vf * angle.tan() / WHEELBASE * sf;
         if car.drifting {
             target_yaw *= 1.0 + 0.45 * tuning.drift_control_mul;
