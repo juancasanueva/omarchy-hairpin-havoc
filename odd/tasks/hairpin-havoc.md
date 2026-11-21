@@ -68,6 +68,10 @@ procedural audio.
       containers and lucky-box crates, baked once per variant at track load (single outline,
       shared compositor), lucky boxes baked into spin frames, and consistent ground-point
       y-sorting between cars and props.
+- [x] T17 Stacked boost flames: a voxel plume (`src/game/flame.rs`) baked at every heading in
+      two palettes (drift boost orange, nitro blue) x 3 flicker frames, rimmed in its own hue
+      (no black outline, no shadow), shaded as a hot ridge along the axis; replaces the two
+      flat flame quads in `fx.rs`.
 
 ## Progress
 - All tasks T1–T13 implemented and committed on `feat/hairpin-havoc`.
@@ -98,12 +102,15 @@ procedural audio.
   so the "?" reads. Shared `stack::ground_z(base, y)` y-sorts cars, props and boxes (z 20.6..29.4,
   test checks every track fits); boost flames stay within `ATTACH_Z` of their car. Screenshots:
   autodrive races on all four tracks (via a temporary `XDG_DATA_HOME` save), lucky boxes drawn
-  over/under a car by ground row, and a prop contact sheet. Known gap: the time-trial ghost
-  (`trial.rs`, z 19) is not y-sorted and draws under props.
+  over/under a car by ground row, and a prop contact sheet. The time-trial ghost is y-sorted
+  with them too (fixed in the T16 commit).
 - Not yet verified by a human: keyboard play, feel/tuning, audio by ear, garage purchases.
 
 - Play-test (user): stacked 3D cars approved; keyboard steering was too twitchy → softened
   (STEER_GAIN 0.45, ramp 5/s, 55% steering at top speed); user confirmed "much better".
+- T17 verified: unit tests (shape, flicker, palette rim, core facing the car, placement),
+  170 tests passed, clippy clean; in-game autodrive captures show the nitro and boost
+  plumes behind the tail at every heading, peeking over the car when it faces away.
 
 ## Next step
 Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,

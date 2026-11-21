@@ -1,6 +1,7 @@
 //! Bevy adapters: app wiring, screens, rendering, input and audio.
 
 pub mod audio;
+pub mod flame;
 pub mod fx;
 pub mod garage;
 pub mod hud;

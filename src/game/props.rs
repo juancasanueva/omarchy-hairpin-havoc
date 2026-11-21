@@ -211,7 +211,7 @@ impl Volume {
     }
 }
 
-fn hash3(x: i32, y: i32, z: i32, salt: u32) -> u32 {
+pub(crate) fn hash3(x: i32, y: i32, z: i32, salt: u32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x8da6_b343)
         ^ (y as u32).wrapping_mul(0xd816_3841)
         ^ (z as u32).wrapping_mul(0xcb1a_b31f)

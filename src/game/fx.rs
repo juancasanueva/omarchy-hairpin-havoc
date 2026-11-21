@@ -11,6 +11,7 @@ use crate::core::track::Surface;
 use crate::core::tracks::TrackId;
 
 use super::AppState;
+use super::flame::{FLICKER_FRAMES, FlameArt, flame_reach};
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::race::{CurrentTrack, PlayerStep, Racer};
 use super::stack::{ATTACH_Z, CarStack, SQUASH};
@@ -33,12 +34,10 @@ const FADE_STEPS: usize = 8;
 /// car's y-sort row and never cross another car or prop.
 const FLAME_Z_FRONT: f32 = ATTACH_Z * 0.5;
 const FLAME_Z_BACK: f32 = -ATTACH_Z * 0.5;
-/// Extra z of the inner flame over the outer one.
-const FLAME_Z_INNER: f32 = ATTACH_Z * 0.25;
 /// Fallback distance from car center to the tail, where flames start.
 const TAIL: f32 = 15.0;
-/// Fallback stack height; flames sit at roughly mid-stack.
-const STACK_HEIGHT: f32 = 10.0;
+/// Flicker frames advance this many times per second.
+const FLICKER_RATE: f32 = 18.0;
 
 /// Exponential shake decay rate (1/s) and the largest offset in world pixels.
 pub const SHAKE_DECAY: f32 = 14.0;
@@ -49,6 +48,7 @@ pub struct FxPlugin;
 impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shake>()
+            .add_systems(Startup, bake_flames)
             .add_systems(OnEnter(AppState::Race), reset_fx)
             .add_systems(PreUpdate, remove_shake)
             .add_systems(
@@ -118,11 +118,10 @@ pub fn rear_wheels(pos: Vec2, heading: f32) -> [Vec2; 2] {
     [pos + squashed(axle + f.perp() * REAR_TRACK), pos + squashed(axle - f.perp() * REAR_TRACK)]
 }
 
-/// Center of a flame of length `len` behind a car, relative to the car root:
-/// on the ground behind the tail, raised to mid-stack height.
-pub fn flame_offset(heading: f32, tail: f32, len: f32, stack_height: f32) -> Vec2 {
-    let back = -Vec2::from_angle(heading) * (tail + len * 0.5);
-    squashed(back) + Vec2::new(0.0, stack_height * 0.5)
+/// Ground point of the stacked flame behind a car, relative to the car root
+/// (the flame's own slices lift it to exhaust height).
+pub fn flame_offset(heading: f32, tail: f32) -> Vec2 {
+    squashed(-Vec2::from_angle(heading) * flame_reach(tail))
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +146,6 @@ struct FxAssets {
     smoke: Vec<Handle<ColorMaterial>>,
     spark_a: Vec<Handle<ColorMaterial>>,
     spark_b: Vec<Handle<ColorMaterial>>,
-    /// Outer/inner flame for regular boosts, then outer/inner for nitro.
-    flame: [Handle<ColorMaterial>; 4],
 }
 
 impl FxAssets {
@@ -211,7 +208,6 @@ struct Particle {
 #[derive(Component)]
 struct Flame {
     owner: Entity,
-    inner: bool,
 }
 
 #[derive(Component)]
@@ -254,13 +250,6 @@ fn prepare_assets(
         return;
     }
     let theme = world_theme(track.id);
-    let mut solid = |c: Color| materials.add(ColorMaterial::from_color(c));
-    let flame = [
-        solid(Color::srgb_u8(255, 132, 36)),
-        solid(Color::srgb_u8(255, 232, 120)),
-        solid(Color::srgb_u8(64, 150, 255)),
-        solid(Color::srgb_u8(170, 250, 255)),
-    ];
     commands.insert_resource(FxAssets {
         track: track.id,
         quad: meshes.add(Rectangle::new(1.0, 1.0)),
@@ -269,30 +258,27 @@ fn prepare_assets(
         smoke: faded(&mut materials, Color::srgba(0.86, 0.86, 0.9, 0.7)),
         spark_a: faded(&mut materials, Color::srgb_u8(255, 250, 220)),
         spark_b: faded(&mut materials, Color::srgb_u8(255, 214, 72)),
-        flame,
     });
 }
 
-/// Gives every racer two flame quads (outer and inner) as children, hidden until boosting.
-fn attach_flames(
-    mut commands: Commands,
-    assets: Option<Res<FxAssets>>,
-    racers: FlamelessRacers,
-) {
-    let Some(assets) = assets else { return };
+/// Boost flames are voxel plumes baked once at every heading.
+fn bake_flames(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    commands.insert_resource(FlameArt::bake(&mut images));
+}
+
+/// Gives every racer a stacked flame sprite as a child, hidden until boosting.
+fn attach_flames(mut commands: Commands, art: Option<Res<FlameArt>>, racers: FlamelessRacers) {
+    let Some(art) = art else { return };
     for e in &racers {
         // Placed relative to the (unrotated) car root each frame in `update_flames`.
         commands.entity(e).insert(HasFlame).with_children(|c| {
-            for inner in [false, true] {
-                c.spawn((
-                    Flame { owner: e, inner },
-                    Mesh2d(assets.quad.clone()),
-                    MeshMaterial2d(assets.flame[usize::from(inner)].clone()),
-                    Transform::from_xyz(-TAIL, 0.0, FLAME_Z_BACK),
-                    Visibility::Hidden,
-                    WORLD_LAYER,
-                ));
-            }
+            c.spawn((
+                Flame { owner: e },
+                Sprite::from_image(art.get(false, 0, 0.0).clone()),
+                Transform::from_xyz(-TAIL, 0.0, FLAME_Z_BACK),
+                Visibility::Hidden,
+                WORLD_LAYER,
+            ));
         });
     }
 }
@@ -481,37 +467,29 @@ fn update_particles(
 
 fn update_flames(
     time: Res<Time>,
-    assets: Option<Res<FxAssets>>,
+    art: Option<Res<FlameArt>>,
     racers: Query<(&Racer, Option<&CarStack>)>,
-    mut flames: Query<(&Flame, &mut Transform, &mut Visibility, &mut MeshMaterial2d<ColorMaterial>)>,
-    mut flicker: Local<u32>,
+    mut flames: Query<(&Flame, &mut Transform, &mut Visibility, &mut Sprite)>,
 ) {
-    let Some(assets) = assets else { return };
-    *flicker = flicker.wrapping_add(1);
-    let t = time.elapsed_secs();
-    for (flame, mut tf, mut vis, mut mat) in &mut flames {
+    let Some(art) = art else { return };
+    let tick = (time.elapsed_secs() * FLICKER_RATE) as usize;
+    for (flame, mut tf, mut vis, mut sprite) in &mut flames {
         let Ok((r, stack)) = racers.get(flame.owner) else { continue };
         if !r.state.is_boosting() {
             vis.set_if_neq(Visibility::Hidden);
             continue;
         }
         vis.set_if_neq(Visibility::Inherited);
-        let nitro = r.state.nitro_active;
-        // Cheap deterministic flicker per car and frame.
-        let wobble = ((t * 47.0 + flame.owner.index_u32() as f32 * 1.7).sin() * 0.5 + 0.5) * 0.6 + 0.7;
-        let (len, wid) = if flame.inner { (5.0 * wobble, 3.0) } else { (9.0 * wobble, 5.0) };
-        let len = len.round().max(2.0);
-        let (tail, height) = stack.map_or((TAIL, STACK_HEIGHT), |s| (s.half_length, s.height));
+        // Cars flicker out of step with each other.
+        let frame = (tick + flame.owner.index_u32() as usize) % FLICKER_FRAMES;
+        let tail = stack.map_or(TAIL, |s| s.half_length);
         let heading = r.state.heading;
         let tail_toward_viewer = heading.sin() > 0.0;
-        let z = if tail_toward_viewer { FLAME_Z_FRONT } else { FLAME_Z_BACK } + if flame.inner { FLAME_Z_INNER } else { 0.0 };
-        tf.translation = flame_offset(heading, tail, len, height).round().extend(z);
-        tf.rotation = Quat::from_rotation_z(heading);
-        tf.scale = Vec3::new(len, wid, 1.0);
-        let swap = (*flicker / 3) % 2 == 1 && !flame.inner;
-        let idx = usize::from(flame.inner ^ swap) + if nitro { 2 } else { 0 };
-        if mat.0 != assets.flame[idx] {
-            mat.0 = assets.flame[idx].clone();
+        let z = if tail_toward_viewer { FLAME_Z_FRONT } else { FLAME_Z_BACK };
+        tf.translation = flame_offset(heading, tail).round().extend(z);
+        let image = art.get(r.state.nitro_active, frame, heading);
+        if sprite.image != *image {
+            sprite.image = image.clone();
         }
     }
 }
@@ -633,12 +611,13 @@ mod tests {
     }
 
     #[test]
-    fn flames_sit_behind_the_tail_at_mid_stack() {
-        let o = flame_offset(0.0, 15.0, 6.0, 10.0);
-        assert_eq!(o, Vec2::new(-18.0, 5.0));
-        // Pointing up, the flame hangs below the car (squashed), still lifted.
-        let up = flame_offset(std::f32::consts::FRAC_PI_2, 15.0, 6.0, 10.0);
+    fn flames_sit_behind_the_tail() {
+        let reach = flame_reach(15.0);
+        let o = flame_offset(0.0, 15.0);
+        assert_eq!(o, Vec2::new(-reach, 0.0));
+        // Pointing up, the flame hangs below the car, squashed like the stack.
+        let up = flame_offset(std::f32::consts::FRAC_PI_2, 15.0);
         assert!((up.x).abs() < 1e-4);
-        assert!((up.y - (-18.0 * SQUASH + 5.0)).abs() < 1e-4);
+        assert!((up.y + reach * SQUASH).abs() < 1e-4);
     }
 }
