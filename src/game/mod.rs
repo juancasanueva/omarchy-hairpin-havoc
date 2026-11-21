@@ -1,5 +1,6 @@
 //! Bevy adapters: app wiring, screens, rendering, input and audio.
 
+pub mod audio;
 pub mod palette;
 pub mod pixel;
 pub mod title;
