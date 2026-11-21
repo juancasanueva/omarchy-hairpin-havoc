@@ -1,6 +1,10 @@
 //! Bevy adapters: app wiring, screens, rendering, input and audio.
 
 pub mod audio;
+pub mod fx;
+pub mod garage;
+pub mod hud;
+pub mod items;
 pub mod meshes;
 pub mod palette;
 pub mod pixel;
@@ -10,6 +14,7 @@ pub mod results;
 pub mod sprites;
 pub mod theme;
 pub mod title;
+pub mod trial;
 pub mod track_view;
 
 use bevy::prelude::*;
@@ -62,6 +67,13 @@ pub fn build_app() -> App {
         title::TitlePlugin,
         race::RacePlugin,
         results::ResultsPlugin,
+    ))
+    .add_plugins((
+        hud::HudPlugin,
+        fx::FxPlugin,
+        items::ItemsPlugin,
+        garage::GaragePlugin,
+        trial::TrialPlugin,
     ));
     app
 }

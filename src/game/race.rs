@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::core::ai::{self, AiBrain};
 use crate::core::car::{self, CarInput, CarModifiers, CarState, CarTuning, DT};
 use crate::core::cars::{CarId, car_spec};
+use crate::core::economy::{BoxItem, GadgetId};
 use crate::core::race::{LapEvent, LapTracker, standings};
 use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
@@ -56,6 +57,29 @@ pub struct Racer {
     pub lap: LapTracker,
     pub drift_points: f32,
     pub brain: Option<AiBrain>,
+}
+
+/// Ordering seams for other plugins' `FixedUpdate` systems.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RaceSet {
+    /// Player and AI inputs are written to `Racer::input`.
+    Input,
+    /// Physics, contacts and laps.
+    Simulate,
+    /// Race clock and phase changes.
+    Post,
+}
+
+/// Gadget and lucky-box state; attached to the player's racer.
+#[derive(Component, Debug, Clone)]
+pub struct Loadout {
+    pub gadget: GadgetId,
+    /// Seconds until the gadget can be used again.
+    pub cooldown: f32,
+    /// Seconds the current gadget effect remains active.
+    pub active: f32,
+    pub item: Option<BoxItem>,
+    pub last_item: Option<BoxItem>,
 }
 
 /// Snapshot of a finished race, kept after race entities despawn.
@@ -122,11 +146,19 @@ impl Plugin for RacePlugin {
             .add_message::<PlayerStep>()
             .add_systems(OnEnter(AppState::Race), setup_race)
             .add_systems(OnExit(AppState::Race), silence_engine)
-            .add_systems(
+            .configure_sets(
                 FixedUpdate,
-                (player_input, ai_input, simulate, advance_clock)
+                (RaceSet::Input, RaceSet::Simulate, RaceSet::Post)
                     .chain()
                     .run_if(in_state(AppState::Race)),
+            )
+            .add_systems(
+                FixedUpdate,
+                (
+                    (player_input, ai_input).chain().in_set(RaceSet::Input),
+                    simulate.in_set(RaceSet::Simulate),
+                    advance_clock.in_set(RaceSet::Post),
+                ),
             )
             .add_systems(
                 Update,
@@ -181,7 +213,7 @@ fn setup_race(
         // `HAIRPIN_AUTODRIVE=1` lets the AI drive the player car (attract mode, testing).
         let autodrive = std::env::var_os("HAIRPIN_AUTODRIVE").is_some();
         let brain = (!is_player || autodrive).then(|| AiBrain::new(slot, ai::personality(slot)));
-        commands.spawn((
+        let mut entity = commands.spawn((
             Racer {
                 slot,
                 is_player,
@@ -202,6 +234,13 @@ fn setup_race(
             DespawnOnExit(AppState::Race),
         ));
         if is_player {
+            entity.insert(Loadout {
+                gadget: profile.data.equipped_gadget,
+                cooldown: 0.0,
+                active: 0.0,
+                item: None,
+                last_item: None,
+            });
             camera.translation = pos.extend(camera.translation.z);
         }
     }
