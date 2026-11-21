@@ -3,11 +3,15 @@
 use bevy::prelude::*;
 
 use crate::core::economy::{race_payout, trial_payout};
+use crate::core::ghost::{Ghost, encode_code};
+use crate::core::save;
+use crate::core::tracks::TrackId;
 
 use super::palette::UiPalette;
 use super::profile::Profile;
 use super::race::RaceOutcome;
 use super::title::GameFont;
+use super::trial::{ClipboardError, clipboard_write};
 use super::{AppState, RaceMode};
 
 pub struct ResultsPlugin;
@@ -16,6 +20,31 @@ impl Plugin for ResultsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::Results), show_results)
             .add_systems(Update, results_input.run_if(in_state(AppState::Results)));
+    }
+}
+
+/// What the results screen is showing, for actions after the outcome is consumed.
+#[derive(Resource, Clone, Copy, Debug)]
+struct ShownResults {
+    mode: RaceMode,
+    track: TrackId,
+}
+
+/// Status line under the time-trial footer ("COPIED").
+#[derive(Component)]
+struct CopyStatus;
+
+/// Copies the code of `ghost` with `write` and returns the status to show.
+pub fn copy_ghost_code<E>(
+    ghost: Option<&Ghost>,
+    write: impl FnOnce(&str) -> Result<(), E>,
+) -> &'static str {
+    match ghost {
+        None => "NO GHOST YET",
+        Some(g) => match write(&encode_code(g)) {
+            Ok(()) => "COPIED",
+            Err(_) => "COPY FAILED",
+        },
     }
 }
 
@@ -47,6 +76,7 @@ fn show_results(
     profile.data.credits += payout.total;
     profile.persist();
     commands.remove_resource::<RaceOutcome>();
+    commands.insert_resource(ShownResults { mode: o.mode, track: o.track });
 
     let mut lines: Vec<(String, Color)> = Vec::new();
     let heading = match o.mode {
@@ -77,6 +107,10 @@ fn show_results(
     ));
     lines.push((format!("BANK {} CR", profile.data.credits), pal.foreground));
     lines.push(("ENTER race again   G garage   ESC menu".into(), pal.muted));
+    let trial = o.mode == RaceMode::TimeTrial;
+    if trial {
+        lines.push(("C copy ghost code".into(), pal.muted));
+    }
 
     commands
         .spawn((
@@ -97,11 +131,36 @@ fn show_results(
                 let size = if i == 0 { 28.0 } else { 12.0 };
                 root.spawn((Text::new(text), font.text(size), TextColor(color)));
             }
+            if trial {
+                root.spawn((CopyStatus, Text::new(""), font.text(8.0), TextColor(pal.good)));
+            }
         });
 }
 
-fn results_input(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>) {
-    if keys.just_pressed(KeyCode::Enter) {
+fn results_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    shown: Option<Res<ShownResults>>,
+    profile: Res<Profile>,
+    pal: Res<UiPalette>,
+    mut status: Query<(&mut Text, &mut TextColor), With<CopyStatus>>,
+    mut next: ResMut<NextState<AppState>>,
+) {
+    if keys.just_pressed(KeyCode::KeyC)
+        && let Some(shown) = shown.filter(|s| s.mode == RaceMode::TimeTrial)
+    {
+        let ghost = profile.dir().and_then(|dir| save::load_ghost(dir, shown.track));
+        let msg = copy_ghost_code(ghost.as_ref(), |code| {
+            clipboard_write(code).inspect_err(|e| {
+                if let ClipboardError::Unavailable(err) = e {
+                    warn!("clipboard write failed: {err}");
+                }
+            })
+        });
+        if let Ok((mut text, mut color)) = status.single_mut() {
+            text.0 = msg.into();
+            color.0 = if msg == "COPIED" { pal.good } else { pal.bad };
+        }
+    } else if keys.just_pressed(KeyCode::Enter) {
         next.set(AppState::Race);
     } else if keys.just_pressed(KeyCode::KeyG) {
         next.set(AppState::Garage);
@@ -112,7 +171,29 @@ fn results_input(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<App
 
 #[cfg(test)]
 mod tests {
-    use super::fmt_time;
+    use super::{copy_ghost_code, fmt_time};
+    use crate::core::cars::CarId;
+    use crate::core::ghost::{GhostRecorder, decode_code};
+    use crate::core::tracks::TrackId;
+    use bevy::math::Vec2;
+
+    #[test]
+    fn copy_ghost_code_reports_status() {
+        assert_eq!(copy_ghost_code(None, |_| Ok::<(), ()>(())), "NO GHOST YET");
+        let mut rec = GhostRecorder::new();
+        for i in 0..60 {
+            rec.record(i as f32 / 30.0, Vec2::new(i as f32, 0.0), 0.0, 50.0, false);
+        }
+        let g = rec.finish(2.0, [0.5, 1.0, 2.0], CarId::Pebble, TrackId::OrchardRing, "YOU".into());
+        let mut copied = String::new();
+        let msg = copy_ghost_code(Some(&g), |code| {
+            copied = code.to_string();
+            Ok::<(), ()>(())
+        });
+        assert_eq!(msg, "COPIED");
+        assert_eq!(decode_code(&copied).unwrap().track, TrackId::OrchardRing);
+        assert_eq!(copy_ghost_code(Some(&g), |_| Err(())), "COPY FAILED");
+    }
 
     #[test]
     fn formats_minutes_seconds_centis() {
