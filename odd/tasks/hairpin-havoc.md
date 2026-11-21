@@ -36,16 +36,16 @@ procedural audio.
   (clippy once the crate compiles cleanly).
 
 ## Tasks
-- [ ] T1 App shell: states (Title/Garage/Race/Results), low-res render target with
+- [x] T1 App shell: states (Title/Garage/Race/Results), low-res render target with
       integer scaling, palette (Omarchy theme loader + fallback), window setup.
-- [ ] T2 Track core: geometry, curvature-based kerbs, gravel runoff, wall, branch
+- [x] T2 Track core: geometry, curvature-based kerbs, gravel runoff, wall, branch
       routes (shortcut + boost lane) with progress remap, boost pads, 4 track defs.
-- [ ] T3 Track rendering: band meshes, kerbs, start grid, props, minimap.
-- [ ] T4 Car physics core (pure): gearbox, steering, drift, charge tiers, nitro,
+- [x] T3 Track rendering: band meshes, kerbs, start grid, props, minimap.
+- [x] T4 Car physics core (pure): gearbox, steering, drift, charge tiers, nitro,
       surfaces, wall response, car-car collision + spinout; unit tests.
-- [ ] T5 Player car in Bevy: input, procedural car sprites, camera, skid/smoke FX.
-- [ ] T6 Race flow: countdown, laps/sectors, standings, finish banner, results.
-- [ ] T7 AI rivals: centerline follow, corner speed, overtaking lane, rubber band,
+- [x] T5 Player car in Bevy: input, procedural car sprites, camera, skid/smoke FX.
+- [x] T6 Race flow: countdown, laps/sectors, standings, finish banner, results.
+- [x] T7 AI rivals: centerline follow, corner speed, overtaking lane, rubber band,
       stuck recovery, nitro/handbrake use.
 - [ ] T8 Lucky boxes + gadgets + items.
 - [ ] T9 HUD: position, laps, timers, PB delta, nitro, gadget pod, gear/speed,
@@ -53,12 +53,17 @@ procedural audio.
 - [ ] T10 Garage + economy + persistence: cars, upgrades, paints, gadget shop,
       payouts, save file.
 - [ ] T11 Time trial + ghosts: recording, playback, PB, ghost codes, clipboard.
-- [ ] T12 Audio: procedural engine synth per car + SFX.
+- [x] T12 Audio: procedural engine synth per car + SFX.
 - [ ] T13 Omarchy integration: .desktop entry, install target, README.
 
 ## Progress
-- Repo initialised (`git init`), crate `hairpin_havoc`, binary `hairpin-havoc`.
-- `src/core/track.rs` drafted (Catmull-Rom centerline, projection, surfaces, tests).
+- T1–T7, T12 done and committed on `feat/hairpin-havoc` (76 tests passing).
+- Verified visually: race renders (pixel canvas, kerbs, runoff, barriers), AI-driven
+  player car laps. Dev flags: `HAIRPIN_AUTOSTART=race|trial`, `HAIRPIN_AUTODRIVE=1`.
+- Fixes found by running: debug-mode overflow in AI seed (wrapping_mul); resizing a live
+  render-target image blanks it (swap in a new image instead).
+- In flight (parallel writers): T8 items/gadgets, T9 HUD+FX, T10 garage+title menu,
+  T11 time trial+ghosts.
 
 ## Next step
-T1 app shell, then T2/T4 cores.
+Integrate the four units, play-test, T13 Omarchy integration.
