@@ -1,0 +1,30 @@
+[package]
+name = "hairpin_havoc"
+version = "0.1.0"
+edition = "2024"
+description = "A top-down pixel-art arcade racer for Omarchy, built with Bevy."
+license = "MIT"
+
+[[bin]]
+name = "hairpin-havoc"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { version = "0.20.1", default-features = false, features = ["2d", "ui", "audio"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[features]
+# Faster incremental dev builds: `cargo run --features dev`
+dev = ["bevy/dynamic_linking"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
