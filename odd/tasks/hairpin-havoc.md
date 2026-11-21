@@ -111,6 +111,7 @@ procedural audio.
 - T17 verified: unit tests (shape, flicker, palette rim, core facing the car, placement),
   170 tests passed, clippy clean; in-game autodrive captures show the nitro and boost
   plumes behind the tail at every heading, peeking over the car when it faces away.
+- Play-test (user): stacked props and stacked flames approved ("PERFECT").
 
 ## Next step
 Human play-test (`make run` or `make install`), then tuning: AI skid-mark density,
