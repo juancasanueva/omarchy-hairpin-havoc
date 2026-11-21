@@ -159,7 +159,7 @@ pub fn spawn_track_view(
                     |i| {
                         path.samples[i]
                             .kerb
-                            .then(|| if (i / 2) % 2 == 0 { theme.kerb_a } else { theme.kerb_b })
+                            .then_some(if (i / 2) % 2 == 0 { theme.kerb_a } else { theme.kerb_b })
                     },
                 );
             }
@@ -188,11 +188,8 @@ pub fn spawn_track_view(
     }
     for slot in 0..4 {
         let (pos, dir) = grid_slot(track, slot);
-        let side = dir.perp();
-        for (a, b) in [(-1.0, 1.0), (1.0, 1.0)] {
-            let base = pos + dir * 14.0 * a;
-            paint.rect(base + side * 10.0 * b * 0.0, side, 12.0, 1.0, theme.line);
-        }
+        // A short line marking the front of each grid box.
+        paint.rect(pos + dir * 16.0, dir.perp(), 12.0, 1.0, theme.line);
     }
 
     // Boost pads: chevrons.
@@ -234,7 +231,7 @@ pub fn spawn_track_view(
 pub fn grid_slot(track: &Track, slot: usize) -> (Vec2, Vec2) {
     let back = 48.0 + 46.0 * slot as f32;
     let (p, t) = track.main.sample_at(track.length() - back);
-    let lateral = if slot % 2 == 0 { 20.0 } else { -20.0 };
+    let lateral = if slot.is_multiple_of(2) { 20.0 } else { -20.0 };
     (p + t.perp() * lateral, t)
 }
 

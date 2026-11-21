@@ -661,7 +661,7 @@ mod tests {
     struct WallAbove;
     impl Ground for WallAbove {
         fn probe(&self, p: Vec2) -> GroundProbe {
-            let wall_push = (p.y > 100.0).then(|| (Vec2::NEG_Y, p.y - 100.0));
+            let wall_push = (p.y > 100.0).then_some((Vec2::NEG_Y, p.y - 100.0));
             GroundProbe { surface: Surface::Road, wall_push, pad: None }
         }
     }
@@ -707,7 +707,7 @@ mod tests {
         assert!(car.forward_speed() < 5.0);
         run(&mut car, brake, 3.0, &Flat(Surface::Road));
         let v = car.forward_speed();
-        assert!(v < -100.0 && v >= -REVERSE_MAX - 1.0, "reverse {v}");
+        assert!((-REVERSE_MAX - 1.0..-100.0).contains(&v), "reverse {v}");
     }
 
     #[test]
