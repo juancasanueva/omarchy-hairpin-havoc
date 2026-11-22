@@ -31,7 +31,7 @@ impl Default for CarTuning {
     }
 }
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use bevy::math::Vec2;
 
@@ -68,6 +68,12 @@ const STEER_AT_TOP_SPEED: f32 = 0.55;
 const DRIFT_TIERS: [f32; 3] = [0.32, 0.66, 0.95];
 const DRIFT_BOOST: [f32; 3] = [0.45, 0.75, 1.05];
 const NITRO_MIN: f32 = 0.08;
+/// Turning speed of a spinout, in radians per second.
+const SPIN_RATE: f32 = 8.4;
+/// Seconds over which a recovering spin eases to a stop.
+const SPIN_EASE: f32 = 0.3;
+/// Fastest turn of a recovering spin, so a sudden change of track direction never snaps the car.
+const SPIN_RATE_MAX: f32 = 15.0;
 
 /// Player or AI intent for one step. `steer` is +1 for left, -1 for right.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -79,7 +85,7 @@ pub struct CarInput {
     pub nitro: bool,
 }
 
-/// Temporary effects granted by gadgets.
+/// Effects on how one car drives, mostly temporary and granted by gadgets.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CarModifiers {
     /// Every surface drives like road, with extra grip.
@@ -90,6 +96,8 @@ pub struct CarModifiers {
     pub ramming: bool,
     /// Small acceleration bonus while phased.
     pub phantom: bool,
+    /// Spinouts end facing along the track. Permanent; only the player's car has it.
+    pub spin_recovery: bool,
 }
 
 /// What the ground looks like at a point. Implemented by `Track`, and by flat
@@ -104,6 +112,8 @@ pub struct GroundProbe {
     pub wall_push: Option<(Vec2, f32)>,
     /// Direction of a boost pad under this point, if any.
     pub pad: Option<Vec2>,
+    /// Unit direction of travel of the route at this point.
+    pub track_dir: Vec2,
 }
 
 impl Ground for Track {
@@ -113,6 +123,7 @@ impl Ground for Track {
             surface: q.surface,
             wall_push: q.wall_push,
             pad: self.pads().find(|pad| pad.contains(p)).map(|pad| pad.dir),
+            track_dir: q.tangent,
         }
     }
 }
@@ -322,6 +333,21 @@ fn drag_for(top: f32, tuning: &CarTuning, extra_force: f32) -> f32 {
     ((force - roll) / (top * top)).max(1e-6)
 }
 
+/// Yaw rate for this step of a spin in direction `dir` with `time_left` to go, so that
+/// it eases to a stop facing `target`. It makes the number of turns that keeps the spin
+/// closest to [`SPIN_RATE`].
+fn recovery_yaw_rate(heading: f32, target: f32, dir: f32, time_left: f32) -> f32 {
+    let steps = (time_left / DT).ceil();
+    let ease = (SPIN_EASE / DT).round();
+    // Steps it would take to cover the remaining angle without slowing down.
+    let full_rate_steps = if steps > ease { steps - (ease - 1.0) * 0.5 } else { steps * (steps + 1.0) / (2.0 * ease) };
+    let offset = (target - heading) * dir;
+    let nominal = SPIN_RATE * full_rate_steps * DT;
+    let angle = offset + TAU * ((nominal - offset) / TAU).round();
+    let this_step = if steps > ease { 1.0 } else { steps / ease };
+    (dir * angle * this_step / (full_rate_steps * DT)).clamp(-SPIN_RATE_MAX, SPIN_RATE_MAX)
+}
+
 /// Advance one car by `DT`.
 pub fn step(
     car: &mut CarState,
@@ -350,7 +376,8 @@ pub fn step(
     car.boost_time = (car.boost_time - DT).max(0.0);
     car.slow_time = (car.slow_time - DT).max(0.0);
     car.pad_cooldown = (car.pad_cooldown - DT).max(0.0);
-    let spinning = car.spin_time > 0.0;
+    let spin_left = car.spin_time;
+    let spinning = spin_left > 0.0;
     car.spin_time = (car.spin_time - DT).max(0.0);
 
     // Steering with asymmetric rates.
@@ -531,7 +558,11 @@ pub fn step(
 
     // Yaw from a bicycle model.
     if spinning {
-        car.yaw_rate = car.spin_dir * 8.4;
+        car.yaw_rate = if mods.spin_recovery {
+            recovery_yaw_rate(car.heading, probe.track_dir.to_angle(), car.spin_dir, spin_left)
+        } else {
+            car.spin_dir * SPIN_RATE
+        };
     } else {
         let sf = if speed < 55.0 {
             (speed / 55.0).sqrt()
@@ -663,7 +694,7 @@ mod tests {
     struct Flat(Surface);
     impl Ground for Flat {
         fn probe(&self, _p: Vec2) -> GroundProbe {
-            GroundProbe { surface: self.0, wall_push: None, pad: None }
+            GroundProbe { surface: self.0, wall_push: None, pad: None, track_dir: Vec2::X }
         }
     }
 
@@ -672,7 +703,7 @@ mod tests {
     impl Ground for WallAbove {
         fn probe(&self, p: Vec2) -> GroundProbe {
             let wall_push = (p.y > 100.0).then_some((Vec2::NEG_Y, p.y - 100.0));
-            GroundProbe { surface: Surface::Road, wall_push, pad: None }
+            GroundProbe { surface: Surface::Road, wall_push, pad: None, track_dir: Vec2::X }
         }
     }
 
@@ -785,6 +816,104 @@ mod tests {
         assert_eq!(crash(400.0, false, true), (Some(1), true));
         assert_eq!(crash(400.0, false, false), (None, false));
         assert_eq!(crash(280.0, true, false), (Some(1), true));
+    }
+
+    /// Signed angle from `b` to `a`, in `(-PI, PI]`.
+    fn angle_between(a: f32, b: f32) -> f32 {
+        Vec2::from_angle(b).angle_to(Vec2::from_angle(a))
+    }
+
+    /// Spin a car on flat ground, whose track runs along +X, until the spin ends.
+    /// Returns the final car and the angle it turned through.
+    fn spin_flat(heading: f32, duration: f32, dir: f32, surface: Surface, recovery: bool) -> (CarState, f32) {
+        let mut car = CarState::new(Vec2::ZERO, heading);
+        car.vel = car.forward() * 300.0;
+        car.spin_out(duration, 0.58, dir);
+        let mods = CarModifiers { spin_recovery: recovery, ..Default::default() };
+        let mut turned = 0.0;
+        while car.spin_time > 0.0 {
+            let before = car.heading;
+            step(&mut car, full_throttle(), &CarTuning::default(), mods, &Flat(surface));
+            turned += angle_between(car.heading, before);
+        }
+        (car, turned)
+    }
+
+    #[test]
+    fn recovering_spin_ends_facing_along_the_track() {
+        for k in 0..24 {
+            let heading = k as f32 * TAU / 24.0;
+            for duration in [0.72, 0.85, 1.0, 1.25] {
+                for dir in [-1.0, 1.0] {
+                    for surface in [Surface::Road, Surface::Grass] {
+                        let (mut car, turned) = spin_flat(heading, duration, dir, surface, true);
+                        let case = format!("heading {heading} duration {duration} dir {dir}");
+                        assert!(angle_between(car.heading, 0.0).abs() < 0.01, "{case}: {}", car.heading);
+                        assert!(turned * dir > 1.0, "{case}: turned {turned}");
+                        // Stays straight and drives off once the spin is over.
+                        run(&mut car, full_throttle(), 0.5, &Flat(surface));
+                        assert!(angle_between(car.heading, 0.0).abs() < 0.05, "{case}: {} after", car.heading);
+                        assert!(car.vel.x > 0.0, "{case}: vel {}", car.vel);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recovering_spin_makes_one_full_turn_after_a_crash_on_the_straight() {
+        for duration in [0.85, 1.05, 1.25] {
+            let (_, turned) = spin_flat(0.0, duration, 1.0, Surface::Road, true);
+            assert!((turned - TAU).abs() < 0.01, "duration {duration}: turned {turned}");
+        }
+    }
+
+    #[test]
+    fn recovering_spin_survives_a_second_hit() {
+        let mods = CarModifiers { spin_recovery: true, ..Default::default() };
+        let mut car = CarState::new(Vec2::ZERO, 0.3);
+        car.vel = Vec2::new(300.0, 0.0);
+        car.spin_out(0.85, 0.58, 1.0);
+        for _ in 0..50 {
+            step(&mut car, full_throttle(), &CarTuning::default(), mods, &Flat(Surface::Road));
+        }
+        car.spin_out(1.1, 0.58, -1.0);
+        while car.spin_time > 0.0 {
+            step(&mut car, full_throttle(), &CarTuning::default(), mods, &Flat(Surface::Road));
+        }
+        assert!(angle_between(car.heading, 0.0).abs() < 0.01, "{}", car.heading);
+    }
+
+    #[test]
+    fn recovering_spin_follows_the_road_on_every_track() {
+        use crate::core::tracks::{TrackId, track_def};
+        let mods = CarModifiers { spin_recovery: true, ..Default::default() };
+        for id in TrackId::ALL {
+            let track = track_def(id).build();
+            for path in track.paths() {
+                for s in path.samples.iter().step_by(7) {
+                    for dir in [-1.0, 1.0] {
+                        let mut car = CarState::new(s.pos, s.tangent.to_angle());
+                        car.vel = s.tangent * 350.0;
+                        car.spin_out(1.0, 0.58, dir);
+                        while car.spin_time > 0.0 {
+                            let before = car.heading;
+                            step(&mut car, full_throttle(), &CarTuning::default(), mods, &track);
+                            let turn = angle_between(car.heading, before).abs();
+                            assert!(turn <= SPIN_RATE_MAX * DT + 1e-3, "{id:?}: snapped by {turn}");
+                        }
+                        let off = angle_between(car.heading, track.query(car.pos).tangent.to_angle());
+                        assert!(off.abs() < 0.2, "{id:?} at {}: off by {off}", s.pos);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn spins_without_recovery_keep_the_fixed_rate() {
+        let (_, turned) = spin_flat(0.0, 1.0, 1.0, Surface::Road, false);
+        assert!((turned - SPIN_RATE).abs() < 2.0 * SPIN_RATE * DT, "turned {turned}");
     }
 
     #[test]

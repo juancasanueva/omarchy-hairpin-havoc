@@ -761,10 +761,14 @@ mod tests {
 
     #[test]
     fn clearing_a_gadget_flag_leaves_others() {
-        let mut m = CarModifiers { all_terrain: true, drift_surge: true, ramming: true, phantom: true };
+        let mut m = CarModifiers { all_terrain: true, drift_surge: true, ramming: true, phantom: true, spin_recovery: true };
         clear_gadget_flag(&mut m, GadgetId::Phantom);
         assert!(!m.phantom && m.all_terrain && m.ramming && m.drift_surge);
         clear_gadget_flag(&mut m, GadgetId::Thumper);
         assert!(m.all_terrain && m.ramming && m.drift_surge);
+        for g in GadgetId::ALL {
+            clear_gadget_flag(&mut m, g);
+        }
+        assert!(m.spin_recovery, "spin recovery is not a gadget");
     }
 }

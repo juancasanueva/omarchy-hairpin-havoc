@@ -213,7 +213,7 @@ fn setup_race(
                 tuning,
                 state,
                 input: CarInput::default(),
-                mods: CarModifiers::default(),
+                mods: CarModifiers { spin_recovery: is_player, ..default() },
                 lap: LapTracker::new(track.length(), progress, LAPS),
                 drift_points: 0.0,
                 brain,
