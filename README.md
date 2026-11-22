@@ -29,7 +29,10 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 
 ## Controls
 
-Driving keys are the defaults; rebind them in Settings (`O`).
+The game opens on a main menu: Play (`P`), Garage (`G`), Settings (`O`), About (`I`) and Quit (`Esc`).
+Move with `↑` `↓` or `W` `S` and press `Enter`, or use the shortcut. Play opens track select.
+
+Driving keys are the defaults; rebind them in Settings.
 
 | Key | Action |
 |-----|--------|
@@ -44,9 +47,7 @@ Driving keys are the defaults; rebind them in Settings (`O`).
 | `G` | Toggle ghost (Time Trial) |
 | `Ctrl+V` | Load a friend's ghost code (Time Trial) |
 | `M` | Mute |
-| `O` | Settings (title screen) |
-| `I` | About: version, source link, license (title screen) |
-| `Esc` | Back to menu |
+| `Esc` | Back: a race or its results → track select → main menu |
 
 ## How it plays
 

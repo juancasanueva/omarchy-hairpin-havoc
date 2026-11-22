@@ -19,8 +19,9 @@ pub mod settings;
 pub mod stack;
 pub mod theme;
 pub mod title;
-pub mod trial;
+pub mod track_select;
 pub mod track_view;
+pub mod trial;
 
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
@@ -30,8 +31,10 @@ pub const APP_ID: &str = "hairpin-havoc";
 /// Top-level screen flow.
 #[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
+    /// Main menu.
     #[default]
     Title,
+    TrackSelect,
     Garage,
     Race,
     Results,
@@ -72,6 +75,7 @@ pub fn build_app() -> App {
         pixel::PixelPlugin,
         audio::GameAudioPlugin,
         title::TitlePlugin,
+        track_select::TrackSelectPlugin,
         race::RacePlugin,
         stack::StackPlugin,
         results::ResultsPlugin,

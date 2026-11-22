@@ -461,7 +461,7 @@ fn race_keys(
     mut next: ResMut<NextState<AppState>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        next.set(AppState::Title);
+        next.set(AppState::TrackSelect);
     } else if keys.just_pressed(KeyCode::KeyR) {
         // Leaving and re-entering the state rebuilds the race.
         next.set(AppState::Race);

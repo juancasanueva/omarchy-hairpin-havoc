@@ -106,7 +106,7 @@ fn show_results(
         pal.warn,
     ));
     lines.push((format!("BANK {} CR", profile.data.credits), pal.foreground));
-    lines.push(("ENTER race again   G garage   ESC menu".into(), pal.muted));
+    lines.push(("ENTER race again   G garage   ESC tracks".into(), pal.muted));
     let trial = o.mode == RaceMode::TimeTrial;
     if trial {
         lines.push(("C copy ghost code".into(), pal.muted));
@@ -165,7 +165,7 @@ fn results_input(
     } else if keys.just_pressed(KeyCode::KeyG) {
         next.set(AppState::Garage);
     } else if keys.just_pressed(KeyCode::Escape) {
-        next.set(AppState::Title);
+        next.set(AppState::TrackSelect);
     }
 }
 
