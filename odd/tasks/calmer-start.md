@@ -31,7 +31,7 @@ Rival gadgets, general AI overtaking, collision strength after the start, time t
 - [x] S1 Baseline: headless ten-car start measurement on every track.
 - [x] S2 Core and game: lane hold, spin grace + tests.
 - [x] S3 Verify: after-measurement, tests, clippy, in-app check.
-- [ ] S4 User play-test.
+- [x] S4 User play-test (passed 2026-11-22).
 
 ## Progress
 Created 2026-11-22.
@@ -52,5 +52,9 @@ Created 2026-11-22.
   starts; contact and wide lines remain in Ember Oval's first turn.
 - The measurement drives all ten cars by AI; a human player was not simulated.
 
+- Idle player probe (throwaway test): the cars in the other column pass within about 2.5 s, the two
+  directly behind after about 4 to 7.5 s; never stuck. After a 1 s delay they may follow for 7 to
+  18 s, some longer. Letting rivals dodge a much slower car early on is a possible follow-up.
+
 ## Next step
-User play-test. Delivery (merge, release) is the user's call.
+Feature complete. Released as v1.5.0 at the user's request.
