@@ -71,11 +71,11 @@ Driving keys are the defaults; rebind them in Settings.
 | `Shift` | Nitro |
 | `E` / `Q` | Use held item, otherwise your gadget |
 | `V` | Toggle wide camera |
-| `R` | Restart |
+| `R` | Restart (asks first) |
 | `G` | Toggle ghost (Time Trial) |
 | `Ctrl+V` | Load a friend's ghost code (Time Trial) |
 | `M` | Mute |
-| `Esc` | Back: a race or its results → track select → main menu |
+| `Esc` | Back: a race (asks first) or its results → track select → main menu |
 
 ## How it plays
 

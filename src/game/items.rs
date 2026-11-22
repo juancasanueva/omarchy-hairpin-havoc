@@ -14,6 +14,7 @@ use crate::core::settings::Action as Bind;
 use crate::core::tracks::track_def;
 
 use super::audio::{PlaySfx, Sfx};
+use super::confirm::no_dialog;
 use super::controls::Controls;
 use super::meshes::MeshBuilder;
 use super::pixel::WORLD_LAYER;
@@ -60,7 +61,7 @@ impl Plugin for ItemsPlugin {
             )
             .add_systems(
                 Update,
-                (queue_use, spawn_boxes, animate_boxes, animate_rings, phantom_fade)
+                (queue_use.run_if(no_dialog), spawn_boxes, animate_boxes, animate_rings, phantom_fade)
                     .run_if(in_state(AppState::Race)),
             );
     }

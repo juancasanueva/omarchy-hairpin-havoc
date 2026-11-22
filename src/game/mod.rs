@@ -2,6 +2,7 @@
 
 pub mod about;
 pub mod audio;
+pub mod confirm;
 pub mod controls;
 pub mod flame;
 pub mod fx;
@@ -88,6 +89,7 @@ pub fn build_app() -> App {
         trial::TrialPlugin,
         about::AboutPlugin,
         settings::SettingsPlugin,
+        confirm::ConfirmPlugin,
     ));
     app
 }

@@ -12,6 +12,7 @@ use crate::core::ghost::{Ghost, GhostRecorder, MAX_LAP_TIME, decode_code};
 use crate::core::save;
 use crate::core::tracks::{TrackId, track_def};
 
+use super::confirm::no_dialog;
 use super::palette::UiPalette;
 use super::pixel::WORLD_LAYER;
 use super::profile::Profile;
@@ -86,7 +87,7 @@ impl Plugin for TrialPlugin {
             )
             .add_systems(
                 Update,
-                (trial_keys, drive_ghost_car, update_trial_ui)
+                (trial_keys.run_if(no_dialog), drive_ghost_car, update_trial_ui)
                     .run_if(in_state(AppState::Race))
                     .run_if(resource_exists::<TrialState>),
             );

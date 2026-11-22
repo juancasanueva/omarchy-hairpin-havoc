@@ -12,6 +12,7 @@ use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
 
 use super::audio::{EngineAudio, PlaySfx, Sfx};
+use super::confirm::{Confirm, ConfirmDialog, Reply};
 use super::controls::Controls;
 use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::profile::Profile;
@@ -453,19 +454,30 @@ fn advance_clock(
     }
 }
 
-fn race_keys(
+/// Race screen keys. Restarting and quitting ask first; the open dialog takes every key.
+#[allow(clippy::too_many_arguments)]
+pub fn race_keys(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut session: ResMut<RaceSession>,
     track: Res<CurrentTrack>,
     racers: Query<&Racer>,
+    dialog: Option<ResMut<ConfirmDialog>>,
     mut next: ResMut<NextState<AppState>>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        next.set(AppState::TrackSelect);
-    } else if keys.just_pressed(KeyCode::KeyR) {
-        // Leaving and re-entering the state rebuilds the race.
-        next.set(AppState::Race);
+    if let Some(mut dialog) = dialog {
+        let Some(reply) = ConfirmDialog::input(&mut dialog, &keys) else { return };
+        if reply == Reply::Accepted {
+            next.set(dialog.action.target());
+        }
+        if reply != Reply::Moved {
+            commands.remove_resource::<ConfirmDialog>();
+        }
+        sfx.write(PlaySfx(if reply == Reply::Accepted { Sfx::MenuSelect } else { Sfx::MenuMove }));
+    } else if let Some(action) = Confirm::requested(&keys) {
+        commands.insert_resource(ConfirmDialog::new(action));
+        sfx.write(PlaySfx(Sfx::MenuMove));
     } else if keys.just_pressed(KeyCode::KeyV) {
         session.wide_camera = !session.wide_camera;
     } else if session.phase == Phase::Finished
@@ -572,9 +584,14 @@ fn follow_camera(
     }
 }
 
-fn engine_audio(session: Res<RaceSession>, racers: Query<&Racer>, mut engine: ResMut<EngineAudio>) {
+fn engine_audio(
+    session: Res<RaceSession>,
+    racers: Query<&Racer>,
+    dialog: Option<Res<ConfirmDialog>>,
+    mut engine: ResMut<EngineAudio>,
+) {
     let Some(p) = racers.iter().find(|r| r.is_player) else { return };
-    engine.active = true;
+    engine.active = dialog.is_none();
     engine.profile = p.car.index();
     engine.rpm = if session.phase == Phase::Countdown {
         // Free revving on the grid.
@@ -641,6 +658,82 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn press(app: &mut App, key: KeyCode) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(key);
+        app.update();
+    }
+
+    fn keys_app(phase: Phase) -> App {
+        let mut app = App::new();
+        let id = TrackId::ALL[0];
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<NextState<AppState>>()
+            .insert_resource(CurrentTrack { id, track: track_def(id).build() })
+            .insert_resource(RaceSession {
+                mode: RaceMode::Race,
+                phase,
+                clock: 1.0,
+                finish_timer: 0.0,
+                wide_camera: false,
+            })
+            .add_message::<PlaySfx>()
+            .add_systems(Update, race_keys);
+        app
+    }
+
+    fn pending(app: &App) -> Option<AppState> {
+        match app.world().resource::<NextState<AppState>>() {
+            NextState::Unchanged => None,
+            NextState::Pending(s) | NextState::PendingIfDifferent(s) => Some(*s),
+        }
+    }
+
+    fn dialog(app: &App) -> Option<Confirm> {
+        app.world().get_resource::<ConfirmDialog>().map(|d| d.action)
+    }
+
+    #[test]
+    fn restart_and_quit_ask_first_in_every_phase() {
+        for phase in [Phase::Countdown, Phase::Running, Phase::Finished] {
+            for (key, action, target) in [
+                (KeyCode::KeyR, Confirm::Restart, AppState::Race),
+                (KeyCode::Escape, Confirm::Quit, AppState::TrackSelect),
+            ] {
+                let mut app = keys_app(phase);
+                press(&mut app, key);
+                assert_eq!((dialog(&app), pending(&app)), (Some(action), None), "{phase:?} {key:?}");
+                press(&mut app, KeyCode::ArrowDown);
+                assert_eq!((dialog(&app), pending(&app)), (Some(action), None));
+                press(&mut app, KeyCode::Enter);
+                assert_eq!((dialog(&app), pending(&app)), (None, Some(target)), "{phase:?} {key:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn cancelling_keeps_the_race_and_swallows_the_key() {
+        for phase in [Phase::Running, Phase::Finished] {
+            for cancel in [KeyCode::Escape, KeyCode::Enter] {
+                let mut app = keys_app(phase);
+                press(&mut app, KeyCode::KeyR);
+                press(&mut app, cancel);
+                assert_eq!((dialog(&app), pending(&app)), (None, None), "{phase:?} {cancel:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn other_race_keys_wait_for_the_dialog() {
+        let mut app = keys_app(Phase::Running);
+        press(&mut app, KeyCode::Escape);
+        press(&mut app, KeyCode::KeyV);
+        press(&mut app, KeyCode::KeyR);
+        assert!(!app.world().resource::<RaceSession>().wide_camera);
+        assert_eq!(dialog(&app), Some(Confirm::Quit));
     }
 
     /// Spins per race start, averaged over every track and slightly jittered
