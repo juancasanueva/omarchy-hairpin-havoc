@@ -5,7 +5,7 @@ A top-down pixel-art arcade racer for [Omarchy](https://omarchy.org), written in
 grab lucky boxes, and fire gadgets at nine rivals across five circuits — or chase your own
 ghost in Time Trial. Menus follow your active Omarchy theme.
 
-![Hairpin Havoc: a stacked 3D car firing nitro across the Orchard Ring start line](docs/screenshot.png)
+![Hairpin Havoc: the pack slides through the first corner of Ember Oval, leaving skid marks](docs/screenshot.png)
 
 ## Quick path
 
@@ -26,6 +26,34 @@ cp -r hairpin-havoc-v*-x86_64-linux/{bin,share} ~/.local/
 
 Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-lib`, `wayland`, `libxkbcommon`
 (all present on a standard Omarchy install). Remove with `make uninstall`.
+
+## Tour
+
+### Race
+
+| | |
+|---|---|
+| ![Ten cars leaving the starting grid on GO](docs/screenshots/grid-start.png) <br> **Ten-car grid.** You start mid-pack against nine rivals (wide camera, `V`). | ![Cars heading for two floating lucky boxes](docs/screenshots/lucky-boxes.png) <br> **Lucky boxes.** Drive through one for a Slick, Thumper or Jammer. |
+| ![A car with orange boost flames and a Drift Boost message](docs/screenshots/drift-boost.png) <br> **Drift boost.** Hold a slide to charge it, release for a kick. | ![Two cars in line with blue nitro flames](docs/screenshots/nitro.png) <br> **Nitro.** Blue flames, and a tank that empties. |
+| ![A shockwave ring spinning out three rivals](docs/screenshots/thumper.png) <br> **Thumper.** A shockwave that spins out everyone close by. | ![A car spinning out on an oil slick](docs/screenshots/slick.png) <br> **Slick.** Oil dropped behind you for whoever follows. |
+
+### Five circuits
+
+| | |
+|---|---|
+| ![Orchard Ring, beside its boost lane](docs/screenshots/orchard-ring.png) <br> **Orchard Ring**, with a boost lane on the right | ![Dune Sprint, just past the start line](docs/screenshots/dune-sprint.png) <br> **Dune Sprint** |
+| ![Neon Docks, cars drifting past containers](docs/screenshots/neon-docks.png) <br> **Neon Docks** | ![Glacier Pass, a hairpin in the snow](docs/screenshots/glacier-pass.png) <br> **Glacier Pass** |
+| ![Ember Oval, the pack drifting through a wide curve](docs/screenshots/ember-oval.png) <br> **Ember Oval** | ![Track select screen showing the Neon Docks map](docs/screenshots/track-select.png) <br> **Track select**: circuit, mode and car |
+
+### Beyond the race
+
+| | |
+|---|---|
+| ![Time Trial: the player chasing a translucent ghost car](docs/screenshots/time-trial.png) <br> **Time Trial.** Race your own ghost, with sector splits. | ![Garage with a rotating car preview, stats and prices](docs/screenshots/garage.png) <br> **Garage.** Spend credits on cars, upgrades, paint and gadgets. |
+
+![The main menu in four Omarchy themes](docs/screenshots/themes.png)
+
+**Your theme, everywhere.** The main menu in Tokyo Night, Gruvbox, Catppuccin Latte and Rosé Pine.
 
 ## Controls
 
