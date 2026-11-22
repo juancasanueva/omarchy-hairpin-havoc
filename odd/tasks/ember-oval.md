@@ -29,7 +29,7 @@ New prop models, AI changes, track editor, banking physics.
 - [x] S1 Core: track id, key, layout with both routes, balanced against the other tracks + tests.
 - [x] S2 Game: world theme, track-count assumptions, README.
 - [x] S3 Verify: tests, clippy, in-app screenshots and an autodriven race.
-- [ ] S4 User play-test.
+- [x] S4 User play-test (passed 2026-11-22).
 
 ## Progress
 Created 2026-11-22.
@@ -46,4 +46,4 @@ Created 2026-11-22.
   wide just before each turn (spline transition).
 
 ## Next step
-User play-test. Delivery (merge, release) is the user's call.
+Feature complete. Released as v1.4.0 at the user's request.
