@@ -33,7 +33,7 @@ Mouse support, gamepad, pause menu, new art.
       race and results `Esc` go there.
 - [x] S2 Main menu in `title.rs` with entries, shortcuts, navigation + tests.
 - [x] S3 README and dev autostart; tests, clippy, in-app check.
-- [ ] S4 User play-test.
+- [x] S4 User play-test (passed 2026-11-22).
 
 ## Progress
 Created 2026-11-22.
@@ -46,4 +46,4 @@ Created 2026-11-22.
   window; keys go to it with `hl.dsp.send_shortcut({ mods, key, window = "pid:<pid>" })`.
 
 ## Next step
-User play-test. Delivery (merge, release) is the user's call.
+Feature complete. Released as v1.3.0 at the user's request.
