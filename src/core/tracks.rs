@@ -1,4 +1,4 @@
-//! The four original circuits. Control points are listed in driving order;
+//! The five original circuits. Control points are listed in driving order;
 //! the start/finish line sits at control point 0.
 
 use super::track::{BranchDef, BranchKind, ControlPoint, Track, cp};
@@ -9,14 +9,17 @@ pub enum TrackId {
     DuneSprint,
     NeonDocks,
     GlacierPass,
+    EmberOval,
 }
 
 impl TrackId {
-    pub const ALL: [TrackId; 4] = [
+    /// Saves and ghost codes store positions in this list: only ever append.
+    pub const ALL: [TrackId; 5] = [
         TrackId::OrchardRing,
         TrackId::DuneSprint,
         TrackId::NeonDocks,
         TrackId::GlacierPass,
+        TrackId::EmberOval,
     ];
 
     pub fn index(self) -> usize {
@@ -29,6 +32,7 @@ impl TrackId {
             TrackId::DuneSprint => "dune-sprint",
             TrackId::NeonDocks => "neon-docks",
             TrackId::GlacierPass => "glacier-pass",
+            TrackId::EmberOval => "ember-oval",
         }
     }
 }
@@ -222,6 +226,62 @@ pub fn track_def(id: TrackId) -> TrackDef {
             ],
             box_stations: [0.05, 0.37, 0.69],
         },
+        // Two straights at y = -400 and 400 joined by half circles of radius
+        // 400 around (1700, 0) and (-1700, 0), one point every 22.5 degrees. The
+        // points 80 px before and after each turn keep the straights straight.
+        TrackId::EmberOval => TrackDef {
+            id,
+            name: "Ember Oval",
+            difficulty: Difficulty::Fast,
+            main: vec![
+                cp(-700.0, -400.0, 80.0),
+                cp(500.0, -400.0, 80.0),
+                cp(1620.0, -400.0, 80.0),
+                cp(1700.0, -400.0, 80.0),
+                cp(1853.1, -369.6, 80.0),
+                cp(1982.8, -282.8, 80.0),
+                cp(2069.6, -153.1, 80.0),
+                cp(2100.0, 0.0, 80.0),
+                cp(2069.6, 153.1, 80.0),
+                cp(1982.8, 282.8, 80.0),
+                cp(1853.1, 369.6, 80.0),
+                cp(1700.0, 400.0, 80.0),
+                cp(1620.0, 400.0, 80.0),
+                cp(0.0, 400.0, 80.0),
+                cp(-1620.0, 400.0, 80.0),
+                cp(-1700.0, 400.0, 80.0),
+                cp(-1853.1, 369.6, 80.0),
+                cp(-1982.8, 282.8, 80.0),
+                cp(-2069.6, 153.1, 80.0),
+                cp(-2100.0, 0.0, 80.0),
+                cp(-2069.6, -153.1, 80.0),
+                cp(-1982.8, -282.8, 80.0),
+                cp(-1853.1, -369.6, 80.0),
+                cp(-1700.0, -400.0, 80.0),
+                cp(-1620.0, -400.0, 80.0),
+            ],
+            branches: vec![
+                // Infield cut inside the right-hand turn.
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 4.0,
+                    to: 10.0,
+                    mids: vec![cp(1905.0, -170.0, 34.0), cp(1905.0, 170.0, 34.0)],
+                },
+                // Wide lane around the left-hand turn.
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 15.0,
+                    to: 23.0,
+                    mids: vec![
+                        cp(-2160.0, 500.0, 42.0),
+                        cp(-2400.0, 0.0, 42.0),
+                        cp(-2160.0, -500.0, 42.0),
+                    ],
+                },
+            ],
+            box_stations: [0.06, 0.42, 0.70],
+        },
     }
 }
 
@@ -276,6 +336,58 @@ mod tests {
                         "{id:?}: samples {i} and {j} only {gap:.0}px apart"
                     );
                 }
+            }
+        }
+    }
+
+    /// Saves and ghost codes store list positions, so the order is a file format.
+    #[test]
+    fn track_order_is_stable() {
+        let keys = TrackId::ALL.map(TrackId::key);
+        assert_eq!(keys, ["orchard-ring", "dune-sprint", "neon-docks", "glacier-pass", "ember-oval"]);
+    }
+
+    /// Surface queries find the road from two 96 px grid cells away.
+    #[test]
+    fn walls_stay_within_the_lookup_reach() {
+        for id in TrackId::ALL {
+            let t = track_def(id).build();
+            for path in t.paths() {
+                for i in 0..path.samples.len() {
+                    let reach = path.wall_offset(i, true).max(path.wall_offset(i, false));
+                    assert!(reach < 180.0, "{id:?}: wall {reach:.0}px from the centerline");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ember_oval_is_an_oval() {
+        let t = track_def(TrackId::EmberOval).build();
+        let mut turned = 0.0;
+        for s in &t.main.samples {
+            turned += s.curvature * crate::core::track::SAMPLE_SPACING;
+            if s.pos.x.abs() < 1500.0 {
+                assert!(s.curvature.abs() < 1e-4, "bent straight at {}", s.pos);
+                assert!((s.pos.y.abs() - 400.0).abs() < 1.0, "straight off line at {}", s.pos);
+            } else if s.pos.x.abs() > 1800.0 {
+                let radius = s.pos.distance(bevy::math::Vec2::new(1700.0 * s.pos.x.signum(), 0.0));
+                assert!((radius - 400.0).abs() < 4.0, "uneven turn at {}: {radius:.0}", s.pos);
+                assert!(s.kerb, "no kerb at {}", s.pos);
+            }
+        }
+        // One full left-hand revolution.
+        assert!((turned - std::f32::consts::TAU).abs() < 0.05, "turned {turned}");
+    }
+
+    #[test]
+    fn ember_oval_routes_trade_distance() {
+        let t = track_def(TrackId::EmberOval).build();
+        for b in &t.branches {
+            let ratio = b.path.length / t.delta(b.start, b.end);
+            match b.kind {
+                BranchKind::Shortcut => assert!((0.75..0.9).contains(&ratio), "shortcut {ratio:.2}"),
+                BranchKind::BoostLane => assert!((1.3..1.8).contains(&ratio), "boost lane {ratio:.2}"),
             }
         }
     }

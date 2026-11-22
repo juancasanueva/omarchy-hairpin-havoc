@@ -634,10 +634,11 @@ mod tests {
             Err(GhostCodeError::UnsupportedVersion(2))
         );
         let mut b = good.clone();
-        b[1] = 4;
+        let unknown = TrackId::ALL.len() as u8;
+        b[1] = unknown;
         assert_eq!(
             decode_code(&code_from(&b)),
-            Err(GhostCodeError::UnknownTrack(4))
+            Err(GhostCodeError::UnknownTrack(unknown))
         );
         let mut b = good.clone();
         b[2] = 7;

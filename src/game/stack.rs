@@ -1407,7 +1407,7 @@ mod tests {
         let (cols, rows) = (8u32, (cars.len() * squashes.len()) as u32);
         let mut sheet = Grid::new(cell.x * cols, cell.y * rows);
         for (ci, car) in cars.iter().enumerate() {
-            let road = crate::game::theme::world_theme(TrackId::ALL[ci % 4]).road.to_srgba();
+            let road = crate::game::theme::world_theme(TrackId::ALL[ci % TrackId::ALL.len()]).road.to_srgba();
             let bg = [road.red, road.green, road.blue].map(|v| (v * 255.0).round() as u8);
             for (si, &sq) in squashes.iter().enumerate() {
                 let row = (ci * squashes.len() + si) as u32;
