@@ -6,7 +6,7 @@ use crate::core::ai::{self, AiBrain};
 use crate::core::car::{self, CarInput, CarModifiers, CarState, CarTuning, DT};
 use crate::core::cars::{CarId, car_spec};
 use crate::core::economy::{BoxItem, GadgetId, PaintId};
-use crate::core::race::{FIELD_SIZE, LapEvent, LapTracker, PLAYER_GRID_SLOT, standings};
+use crate::core::race::{FIELD_SIZE, LapEvent, LapTracker, PLAYER_GRID_SLOT, contact_spins, standings};
 use crate::core::settings::Action;
 use crate::core::track::Track;
 use crate::core::tracks::{LAPS, TrackId, track_def};
@@ -17,7 +17,7 @@ use super::pixel::{WORLD_LAYER, WorldCamera};
 use super::profile::Profile;
 use super::stack::{CAR_SORT, SORT_STEP, StackArt, StackPose, car_slices, ground_z, spawn_stack};
 use super::theme::world_theme;
-use super::track_view::{grid_slot, spawn_track_view};
+use super::track_view::{grid_lateral, grid_slot, spawn_track_view};
 use super::{AppState, RaceMode};
 
 pub const COUNTDOWN: f32 = 2.4;
@@ -203,7 +203,7 @@ fn setup_race(
         let tuning = if is_player { profile.data.tuning_for(car) } else { spec.tuning };
         // `HAIRPIN_AUTODRIVE=1` lets the AI drive the player car (attract mode, testing).
         let autodrive = std::env::var_os("HAIRPIN_AUTODRIVE").is_some();
-        let brain = (!is_player || autodrive).then(|| AiBrain::new(slot, ai::personality(slot)));
+        let brain = (!is_player || autodrive).then(|| AiBrain::new(slot, ai::personality(slot), grid_lateral(slot)));
         let mut entity = commands.spawn((
             Racer {
                 slot,
@@ -359,6 +359,7 @@ fn simulate(
     }
 
     // Car-to-car contacts.
+    let spins = contact_spins(session.clock);
     for i in 0..list.len() {
         for j in (i + 1)..list.len() {
             if list[i].mods.phantom || list[j].mods.phantom {
@@ -367,7 +368,7 @@ fn simulate(
             let (a, b) = list.split_at_mut(j);
             let (ra, rb) = (&mut *a[i], &mut *b[0]);
             let ram = [ra.mods.ramming, rb.mods.ramming];
-            if let Some(contact) = car::collide(&mut ra.state, &mut rb.state, ram) {
+            if let Some(contact) = car::collide(&mut ra.state, &mut rb.state, ram, spins) {
                 let involves_player = ra.is_player || rb.is_player;
                 if involves_player && contact.impact > 30.0 {
                     sfx.write(PlaySfx(Sfx::Bump { strength: (contact.impact / 250.0).min(1.0) }));
@@ -620,7 +621,7 @@ mod tests {
 
     #[test]
     fn race_field_fills_the_grid_around_the_player() {
-        for track in 0..4 {
+        for track in 0..TrackId::ALL.len() {
             let field = race_field(player(), track);
             assert_eq!(field.len(), FIELD_SIZE);
             assert!(field[PLAYER_GRID_SLOT].is_player);
@@ -640,5 +641,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Spins per race start, averaged over every track and slightly jittered
+    /// grids: `[first 3 s, 3 to 8 s]`.
+    fn start_spins(trials: u32) -> [f32; 2] {
+        let mut spins = [0u32; 2];
+        for id in TrackId::ALL {
+            let track = track_def(id).build();
+            for trial in 0..trials {
+                let mut rng = 0x1357 + trial * 7919;
+                let mut jitter = || (crate::core::items::next_rand(&mut rng) % 1000) as f32 / 1000.0 * 3.0 - 1.5;
+                let mut cars: Vec<_> = race_field(player(), id.index())
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, e)| {
+                        let (p, d) = grid_slot(&track, slot);
+                        let state = CarState::new(p + Vec2::new(jitter(), jitter()), d.to_angle());
+                        (state, AiBrain::new(slot, ai::personality(slot), grid_lateral(slot)), car_spec(e.car).tuning)
+                    })
+                    .collect();
+                for step in 0..(8.0 / DT) as usize {
+                    let clock = step as f32 * DT;
+                    let seen: Vec<(Vec2, Vec2)> = cars.iter().map(|c| (c.0.pos, c.0.vel)).collect();
+                    for (i, (state, brain, tuning)) in cars.iter_mut().enumerate() {
+                        let mut others = seen.clone();
+                        others.remove(i);
+                        let input = brain.drive(&track, state, tuning, &others, 0.0);
+                        car::step(state, input, tuning, CarModifiers::default(), &track);
+                    }
+                    for j in 1..cars.len() {
+                        let (a, b) = cars.split_at_mut(j);
+                        for other in a {
+                            let hit = car::collide(&mut other.0, &mut b[0].0, [false; 2], contact_spins(clock));
+                            if hit.is_some_and(|c| c.spun.is_some()) {
+                                spins[usize::from(clock >= 3.0)] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        spins.map(|n| n as f32 / (trials as f32 * TrackId::ALL.len() as f32))
+    }
+
+    /// Without the lane hold, following and spin grace this measured 7.9 and 7.7.
+    #[test]
+    fn the_field_gets_away_cleanly() {
+        let [grace, after] = start_spins(6);
+        assert_eq!(grace, 0.0);
+        assert!(after < 4.0, "{after:.1} spins per start after the grace period");
     }
 }

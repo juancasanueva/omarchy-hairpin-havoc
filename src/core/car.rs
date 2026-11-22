@@ -599,7 +599,8 @@ pub struct Contact {
 }
 
 /// Resolve overlap between two cars. `ram` flags say whether a car is ramming.
-pub fn collide(a: &mut CarState, b: &mut CarState, ram: [bool; 2]) -> Option<Contact> {
+/// With `spins` off, contact still bumps but only a ramming car spins the other.
+pub fn collide(a: &mut CarState, b: &mut CarState, ram: [bool; 2], spins: bool) -> Option<Contact> {
     let d = b.pos - a.pos;
     let dist = d.length();
     let min = CAR_RADIUS * 2.0;
@@ -630,7 +631,7 @@ pub fn collide(a: &mut CarState, b: &mut CarState, ram: [bool; 2]) -> Option<Con
     let b_into = b.vel.dot(-n) > 0.0 && b.forward().dot(-n) > 0.3;
     let mut spun = None;
     for (hitter, target_idx, into) in [(0usize, 1usize, a_into), (1, 0, b_into)] {
-        if !into {
+        if !into || !(spins || ram[hitter]) {
             continue;
         }
         let (h, tg) = if hitter == 0 { (&*a, &*b) } else { (&*b, &*a) };
@@ -763,11 +764,27 @@ mod tests {
         hitter.vel = Vec2::new(400.0, 0.0);
         let mut target = CarState::new(Vec2::new(30.0, 0.0), 0.0);
         target.vel = Vec2::new(250.0, 0.0);
-        let c = collide(&mut hitter, &mut target, [false, false]).unwrap();
+        let c = collide(&mut hitter, &mut target, [false, false], true).unwrap();
         assert!(c.impact > 100.0);
         assert_eq!(c.spun, Some(1));
         assert!(target.spin_time > 0.8);
         assert!(hitter.pos.distance(target.pos) >= CAR_RADIUS * 2.0 - 0.01);
+    }
+
+    #[test]
+    fn without_spins_contact_only_bumps_unless_ramming() {
+        let crash = |speed: f32, ram: bool, spins: bool| {
+            let mut hitter = CarState::new(Vec2::ZERO, 0.0);
+            hitter.vel = Vec2::new(speed, 0.0);
+            let mut target = CarState::new(Vec2::new(30.0, 0.0), 0.0);
+            target.vel = Vec2::new(250.0, 0.0);
+            let c = collide(&mut hitter, &mut target, [ram, false], spins).unwrap();
+            assert!(c.spun.is_some() || target.vel.x > 250.0, "still bumped");
+            (c.spun, target.spin_time > 0.0)
+        };
+        assert_eq!(crash(400.0, false, true), (Some(1), true));
+        assert_eq!(crash(400.0, false, false), (None, false));
+        assert_eq!(crash(280.0, true, false), (Some(1), true));
     }
 
     #[test]
@@ -776,7 +793,7 @@ mod tests {
         a.vel = Vec2::new(210.0, 0.0);
         let mut b = CarState::new(Vec2::new(33.0, 0.0), 0.0);
         b.vel = Vec2::new(200.0, 0.0);
-        let c = collide(&mut a, &mut b, [false, false]).unwrap();
+        let c = collide(&mut a, &mut b, [false, false], true).unwrap();
         assert_eq!(c.spun, None);
     }
 }

@@ -275,6 +275,10 @@ fn spawn_prop(commands: &mut Commands, baked: &BakedProp, p: Vec2, shadow: Color
 pub fn grid_slot(track: &Track, slot: usize) -> (Vec2, Vec2) {
     let back = 48.0 + 36.0 * slot as f32;
     let (p, t) = track.main.sample_at(track.length() - back);
-    let lateral = if slot.is_multiple_of(2) { 20.0 } else { -20.0 };
-    (p + t.perp() * lateral, t)
+    (p + t.perp() * grid_lateral(slot), t)
+}
+
+/// Sideways offset of starting slot `slot` (positive = left of travel).
+pub fn grid_lateral(slot: usize) -> f32 {
+    if slot.is_multiple_of(2) { 20.0 } else { -20.0 }
 }

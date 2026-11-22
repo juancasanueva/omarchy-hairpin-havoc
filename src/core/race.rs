@@ -9,6 +9,13 @@ use std::cmp::Ordering;
 pub const FIELD_SIZE: usize = 10;
 /// Grid slot the player starts from (0 = pole), mid-pack.
 pub const PLAYER_GRID_SLOT: usize = 5;
+/// Seconds after GO during which contact bumps cars without spinning them.
+pub const START_GRACE: f32 = 3.0;
+
+/// Whether ordinary contact may spin a car at race time `clock`.
+pub fn contact_spins(clock: f32) -> bool {
+    clock >= START_GRACE
+}
 
 pub const SPLITS: [f32; 2] = [1.0 / 3.0, 2.0 / 3.0];
 /// Largest believable progress change per update; larger jumps are ignored.
@@ -159,6 +166,14 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn contact_spins_only_after_the_start_grace() {
+        assert!(!contact_spins(-1.0));
+        assert!(!contact_spins(0.0));
+        assert!(!contact_spins(START_GRACE - 0.01));
+        assert!(contact_spins(START_GRACE));
     }
 
     #[test]
