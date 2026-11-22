@@ -168,6 +168,8 @@ pub struct CarState {
     pub drift_pending: f32,
     pub nitro: f32,
     pub nitro_active: bool,
+    /// The tank burnt out; nitro stays off until the button is released.
+    nitro_spent: bool,
     pub boost_time: f32,
     pub spin_time: f32,
     spin_dir: f32,
@@ -226,6 +228,7 @@ impl CarState {
             drift_pending: 0.0,
             nitro: 0.35,
             nitro_active: false,
+            nitro_spent: false,
             boost_time: 0.0,
             spin_time: 0.0,
             spin_dir: 1.0,
@@ -410,7 +413,8 @@ pub fn step(
     car.rpm = rpm_for(car.gear, vf, tuning);
 
     // Nitro.
-    let can_fire = input.nitro && !spinning && (car.nitro_active || car.nitro >= NITRO_MIN);
+    car.nitro_spent &= input.nitro;
+    let can_fire = input.nitro && !spinning && !car.nitro_spent && (car.nitro_active || car.nitro >= NITRO_MIN);
     if can_fire && car.nitro > 0.0 {
         if !car.nitro_active {
             ev.nitro_fired = true;
@@ -418,6 +422,7 @@ pub fn step(
         }
         car.nitro_active = true;
         car.nitro = (car.nitro - DT / tuning.nitro_duration).max(0.0);
+        car.nitro_spent = car.nitro <= 0.0;
     } else {
         car.nitro_active = false;
     }
@@ -777,6 +782,28 @@ mod tests {
         assert!(ev.nitro_fired);
         assert!(b.speed() > a.speed() + 20.0);
         assert!(b.nitro < 0.5);
+    }
+
+    #[test]
+    fn empty_nitro_cuts_out_until_the_button_is_pressed_again() {
+        let hold = CarInput { throttle: 1.0, nitro: true, ..Default::default() };
+        let mut car = CarState::new(Vec2::ZERO, 0.0);
+        car.vel = Vec2::new(300.0, 0.0);
+        car.nitro = 1.0;
+        run(&mut car, hold, 2.5, &Flat(Surface::Road));
+        assert!(car.nitro_active, "still has fuel");
+        run(&mut car, hold, 0.5, &Flat(Surface::Road));
+        assert!(!car.nitro_active, "burnt out");
+
+        // Long enough to refill past the firing minimum: holding never re-fires.
+        let ev = run(&mut car, hold, 12.0, &Flat(Surface::Road));
+        assert!(!ev.nitro_fired && !car.nitro_active);
+        assert!(car.nitro > NITRO_MIN, "refilled to {}", car.nitro);
+        assert!((car.speed() - BASE_TOP_SPEED).abs() < 15.0, "top speed {}", car.speed());
+
+        run(&mut car, full_throttle(), DT * 1.5, &Flat(Surface::Road));
+        let ev = run(&mut car, hold, DT * 1.5, &Flat(Surface::Road));
+        assert!(ev.nitro_fired && car.nitro_active, "fires again on a new press");
     }
 
     #[test]
