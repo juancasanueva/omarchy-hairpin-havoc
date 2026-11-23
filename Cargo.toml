@@ -1,6 +1,6 @@
 [package]
 name = "hairpin_havoc"
-version = "1.8.0"
+version = "1.8.1"
 edition = "2024"
 description = "A top-down pixel-art arcade racer for Omarchy, built with Bevy."
 license = "MIT"
