@@ -34,7 +34,7 @@ New prop models, AI changes, physics changes, track select redesign.
 - [x] T1 Core: five track ids, keys, layouts with both routes + stable-order test update.
 - [x] T2 Game: five world themes, README.
 - [x] T3 Verify: tests, clippy, rendered layouts checked, in-app track select and a race.
-- [ ] T4 User play-test.
+- [x] T4 User play-test (passed 2026-11-23).
 
 ## Progress
 Created 2026-11-23.
@@ -55,4 +55,4 @@ Created 2026-11-23.
 - Gentle AI review (reliability lens, user granted): approved with no findings, acknowledged.
 
 ## Next step
-T4 user play-test.
+Feature complete. Released as v1.8.0 at the user's request.
