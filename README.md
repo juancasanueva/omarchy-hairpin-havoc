@@ -2,7 +2,7 @@
 
 A top-down pixel-art arcade racer for [Omarchy](https://omarchy.org), written in Rust with
 [Bevy](https://bevyengine.org). Drift to charge mini-turbos, burn nitro on the straights,
-grab lucky boxes, and fire gadgets at nine rivals across five circuits — or chase your own
+grab lucky boxes, and fire gadgets at nine rivals across ten circuits — or chase your own
 ghost in Time Trial. Menus follow your active Omarchy theme.
 
 ![Hairpin Havoc: the pack slides through the first corner of Ember Oval, leaving skid marks](docs/screenshot.png)
@@ -37,13 +37,16 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 | ![A car with orange boost flames and a Drift Boost message](docs/screenshots/drift-boost.png) <br> **Drift boost.** Hold a slide to charge it, release for a kick. | ![Two cars in line with blue nitro flames](docs/screenshots/nitro.png) <br> **Nitro.** Blue flames, and a tank that empties. |
 | ![A shockwave ring spinning out three rivals](docs/screenshots/thumper.png) <br> **Thumper.** A shockwave that spins out everyone close by. | ![A car spinning out on an oil slick](docs/screenshots/slick.png) <br> **Slick.** Oil dropped behind you for whoever follows. |
 
-### Five circuits
+### Ten circuits
 
 | | |
 |---|---|
 | ![Orchard Ring, beside its boost lane](docs/screenshots/orchard-ring.png) <br> **Orchard Ring**, with a boost lane on the right | ![Dune Sprint, just past the start line](docs/screenshots/dune-sprint.png) <br> **Dune Sprint** |
 | ![Neon Docks, cars drifting past containers](docs/screenshots/neon-docks.png) <br> **Neon Docks** | ![Glacier Pass, a hairpin in the snow](docs/screenshots/glacier-pass.png) <br> **Glacier Pass** |
-| ![Ember Oval, the pack drifting through a wide curve](docs/screenshots/ember-oval.png) <br> **Ember Oval** | ![Track select screen showing the Neon Docks map](docs/screenshots/track-select.png) <br> **Track select**: circuit, mode and car |
+| ![Ember Oval, the pack drifting through a wide curve](docs/screenshots/ember-oval.png) <br> **Ember Oval** | ![Maple Loop, cars drifting where the shortcut rejoins](docs/screenshots/maple-loop.png) <br> **Maple Loop** |
+| ![Salt Flats, two cars passing the shortcut on the salt pan](docs/screenshots/salt-flats.png) <br> **Salt Flats** | ![Iron Harbor, the pack sweeping past rusty containers](docs/screenshots/iron-harbor.png) <br> **Iron Harbor** |
+| ![Aurora Ridge, cars drifting through a snowy night curve](docs/screenshots/aurora-ridge.png) <br> **Aurora Ridge** | ![Jungle Twist, the pack leaving a kerbed bend](docs/screenshots/jungle-twist.png) <br> **Jungle Twist** |
+| ![Track select screen showing the Neon Docks map](docs/screenshots/track-select.png) <br> **Track select**: circuit, mode and car | |
 
 ### Beyond the race
 
