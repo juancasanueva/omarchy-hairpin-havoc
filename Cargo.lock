@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "hairpin_havoc"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "bevy",
  "serde",
