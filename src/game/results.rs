@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::core::economy::{race_payout, trial_payout};
 use crate::core::ghost::{Ghost, encode_code};
-use crate::core::save;
+use crate::core::save::{self, BestRace};
 use crate::core::tracks::TrackId;
 
 use super::palette::UiPalette;
@@ -57,6 +57,12 @@ pub fn fmt_time(t: f32) -> String {
     format!("{}:{:02}.{:02}", cs / 6000, (cs / 100) % 60, cs % 100)
 }
 
+/// The player's place and race time, when the player crossed the finish line.
+pub fn player_race(o: &RaceOutcome) -> Option<BestRace> {
+    let time = o.rows.iter().find(|r| r.is_player)?.finished_at?;
+    Some(BestRace { place: o.place, time })
+}
+
 fn show_results(
     mut commands: Commands,
     outcome: Option<Res<RaceOutcome>>,
@@ -68,6 +74,8 @@ fn show_results(
     let place = o.place;
     let best = o.best_lap.unwrap_or(f32::INFINITY);
     let new_pb = best.is_finite() && profile.data.submit_lap(o.track, best);
+    let new_best_finish = o.mode == RaceMode::Race
+        && player_race(&o).is_some_and(|r| profile.data.submit_race(o.track, r));
     let drift = o.drift_points.max(0.0) as u32;
     let payout = match o.mode {
         RaceMode::Race => race_payout(place, drift, new_pb),
@@ -84,6 +92,9 @@ fn show_results(
         RaceMode::TimeTrial => "RUN COMPLETE".to_string(),
     };
     lines.push((heading, pal.accent));
+    if new_best_finish {
+        lines.push(("NEW BEST FINISH!".into(), pal.good));
+    }
     if o.mode == RaceMode::Race {
         for (pos, r) in o.rows.iter().enumerate() {
             let time = r.finished_at.map_or("RACING".to_string(), fmt_time);
@@ -171,8 +182,11 @@ fn results_input(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_ghost_code, fmt_time};
+    use super::{copy_ghost_code, fmt_time, player_race};
     use crate::core::cars::CarId;
+    use crate::core::save::BestRace;
+    use crate::game::RaceMode;
+    use crate::game::race::{OutcomeRow, RaceOutcome};
     use crate::core::ghost::{GhostRecorder, decode_code};
     use crate::core::tracks::TrackId;
     use bevy::math::Vec2;
@@ -193,6 +207,23 @@ mod tests {
         assert_eq!(msg, "COPIED");
         assert_eq!(decode_code(&copied).unwrap().track, TrackId::OrchardRing);
         assert_eq!(copy_ghost_code(Some(&g), |_| Err(())), "COPY FAILED");
+    }
+
+    #[test]
+    fn player_race_needs_a_finished_player() {
+        let row = |is_player, finished_at| OutcomeRow { name: "X".into(), is_player, finished_at };
+        let mut o = RaceOutcome {
+            mode: RaceMode::Race,
+            track: TrackId::OrchardRing,
+            rows: vec![row(false, Some(170.0)), row(true, Some(181.5)), row(false, None)],
+            place: 2,
+            lap_times: vec![],
+            best_lap: None,
+            drift_points: 0.0,
+        };
+        assert_eq!(player_race(&o), Some(BestRace { place: 2, time: 181.5 }));
+        o.rows[1].finished_at = None;
+        assert_eq!(player_race(&o), None);
     }
 
     #[test]

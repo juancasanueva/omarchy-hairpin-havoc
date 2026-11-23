@@ -18,8 +18,9 @@ use super::economy::{
     GadgetId, PaintId, UpgradeKind, UpgradeLevels, apply_upgrades, upgrade_price,
 };
 use super::ghost::{Ghost, MAX_LAP_TIME, decode_code, encode_code};
+use super::race::FIELD_SIZE;
 use super::settings::Settings;
-use super::tracks::TrackId;
+use super::tracks::{LAPS, TrackId};
 
 pub const APP_DIR_NAME: &str = "hairpin-havoc";
 pub const SAVE_FILE_NAME: &str = "save.toml";
@@ -50,9 +51,36 @@ pub struct SaveData {
     /// Best lap seconds keyed by `TrackId::key`.
     #[serde(deserialize_with = "lenient_map")]
     pub best_laps: HashMap<String, f32>,
+    /// Best finished race keyed by `TrackId::key`.
+    #[serde(deserialize_with = "lenient_map")]
+    pub best_races: HashMap<String, BestRace>,
     /// Settings screen values; a malformed table falls back to the defaults.
     #[serde(deserialize_with = "lenient_value")]
     pub settings: Settings,
+}
+
+/// A finished race: the player's position and total race time.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BestRace {
+    /// 1..=`FIELD_SIZE`.
+    pub place: u8,
+    /// Seconds from the start to the finish line.
+    pub time: f32,
+}
+
+impl BestRace {
+    /// A position inside the field and a time a full race could take.
+    pub fn is_valid(&self) -> bool {
+        (1..=FIELD_SIZE).contains(&usize::from(self.place))
+            && self.time.is_finite()
+            && self.time > 0.0
+            && self.time <= MAX_LAP_TIME * LAPS as f32
+    }
+
+    /// Better position wins; on the same position the faster time wins.
+    pub fn beats(&self, other: &BestRace) -> bool {
+        self.place < other.place || (self.place == other.place && self.time < other.time)
+    }
 }
 
 impl Default for SaveData {
@@ -78,6 +106,7 @@ impl Default for SaveData {
             equipped_gadget: GadgetId::Thumper,
             muted: false,
             best_laps: HashMap::new(),
+            best_races: HashMap::new(),
             settings: Settings::default(),
         }
     }
@@ -182,6 +211,8 @@ impl SaveData {
                 && *t > 0.0
                 && *t <= MAX_LAP_TIME
         });
+        self.best_races
+            .retain(|k, r| TrackId::ALL.iter().any(|tr| tr.key() == k) && r.is_valid());
     }
 
     pub fn owns_car(&self, car: CarId) -> bool {
@@ -226,6 +257,22 @@ impl SaveData {
             self.best_laps.insert(track.key().to_owned(), lap_time);
         }
         is_pb
+    }
+
+    pub fn best_race(&self, track: TrackId) -> Option<BestRace> {
+        self.best_races.get(track.key()).copied()
+    }
+
+    /// Records a finished race; returns `true` when it is a new best finish.
+    pub fn submit_race(&mut self, track: TrackId, result: BestRace) -> bool {
+        if !result.is_valid() {
+            return false;
+        }
+        let is_best = self.best_race(track).is_none_or(|best| result.beats(&best));
+        if is_best {
+            self.best_races.insert(track.key().to_owned(), result);
+        }
+        is_best
     }
 
     fn spend(&mut self, price: u32) -> Result<u32, PurchaseError> {
@@ -591,6 +638,63 @@ mod tests {
         assert!(!d.submit_lap(TrackId::GlacierPass, f32::NAN));
         assert_eq!(d.best_lap(TrackId::GlacierPass), Some(65.5));
         assert_eq!(d.best_lap(TrackId::OrchardRing), None);
+    }
+
+    #[test]
+    fn best_finishes_rank_by_place_then_time() {
+        let race = |place, time| BestRace { place, time };
+        let mut d = SaveData::default();
+        assert!(d.submit_race(TrackId::DuneSprint, race(4, 200.0)));
+        assert!(!d.submit_race(TrackId::DuneSprint, race(5, 150.0)), "worse place, faster");
+        assert!(!d.submit_race(TrackId::DuneSprint, race(4, 201.0)), "same place, slower");
+        assert!(d.submit_race(TrackId::DuneSprint, race(4, 199.5)), "same place, faster");
+        assert!(d.submit_race(TrackId::DuneSprint, race(2, 260.0)), "better place, slower");
+        assert_eq!(d.best_race(TrackId::DuneSprint), Some(race(2, 260.0)));
+        assert_eq!(d.best_race(TrackId::OrchardRing), None);
+    }
+
+    #[test]
+    fn invalid_finishes_are_ignored() {
+        let mut d = SaveData::default();
+        for bad in [
+            BestRace { place: 0, time: 100.0 },
+            BestRace { place: FIELD_SIZE as u8 + 1, time: 100.0 },
+            BestRace { place: 1, time: f32::NAN },
+            BestRace { place: 1, time: 0.0 },
+            BestRace { place: 1, time: MAX_LAP_TIME * LAPS as f32 + 1.0 },
+        ] {
+            assert!(!d.submit_race(TrackId::NeonDocks, bad), "{bad:?}");
+        }
+        assert!(d.best_races.is_empty());
+    }
+
+    #[test]
+    fn best_finishes_survive_save_and_drop_bad_entries() {
+        let mut d = SaveData::default();
+        d.submit_race(TrackId::GlacierPass, BestRace { place: 3, time: 187.25 });
+        let back: SaveData = toml::from_str(&toml::to_string(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
+
+        let text = r#"
+            [best_races.glacier-pass]
+            place = 1
+            time = 180.0
+
+            [best_races.moon-base]
+            place = 1
+            time = 180.0
+
+            [best_races.neon-docks]
+            place = 0
+            time = 180.0
+
+            [best_races.dune-sprint]
+            place = "first"
+        "#;
+        let mut parsed: SaveData = toml::from_str(text).unwrap();
+        parsed.sanitize();
+        assert_eq!(parsed.best_races.len(), 1);
+        assert_eq!(parsed.best_race(TrackId::GlacierPass), Some(BestRace { place: 1, time: 180.0 }));
     }
 }
 
