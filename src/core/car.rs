@@ -175,8 +175,6 @@ pub struct CarState {
     spin_dir: f32,
     spin_speed_mul_applied: bool,
     pub slow_time: f32,
-    since_steer_cross: f32,
-    last_steer_sign: f32,
     handbrake_prev: bool,
     pad_cooldown: f32,
 }
@@ -234,8 +232,6 @@ impl CarState {
             spin_dir: 1.0,
             spin_speed_mul_applied: false,
             slow_time: 0.0,
-            since_steer_cross: 10.0,
-            last_steer_sign: 0.0,
             handbrake_prev: false,
             pad_cooldown: 0.0,
         }
@@ -393,14 +389,6 @@ pub fn step(
         STEER_RATE_IN
     };
     car.steer = approach(car.steer, target, rate * DT);
-    let sign = input.steer.signum();
-    if sign != 0.0 && sign != car.last_steer_sign {
-        if car.last_steer_sign != 0.0 {
-            car.since_steer_cross = 0.0;
-        }
-        car.last_steer_sign = sign;
-    }
-    car.since_steer_cross += DT;
 
     // Gearbox.
     let old_gear = car.gear;
@@ -481,7 +469,9 @@ pub fn step(
     // Brakes and coasting must not reverse the direction by themselves.
     vf = if vf > 0.0 && new_vf < 0.0 && input.brake <= 0.01 { 0.0 } else { new_vf };
 
-    // Drift start.
+    // Drift start: the handbrake, braking into a turn, or sliding off the road.
+    // Quick left-right corrections never start one on their own: with a
+    // keyboard they are how you drive straight.
     let steer_abs = input.steer.abs();
     let slip = car.slip();
     let fresh_handbrake = input.handbrake && !car.handbrake_prev;
@@ -493,8 +483,6 @@ pub fn step(
             || (grip < 0.8 && steer_abs > 0.6 && speed > 140.0)
         {
             Some(0.9)
-        } else if speed > 240.0 && steer_abs > 0.85 && car.since_steer_cross < 0.35 {
-            Some(1.15)
         } else {
             None
         };
@@ -754,6 +742,21 @@ mod tests {
         run(&mut car, brake, 3.0, &Flat(Surface::Road));
         let v = car.forward_speed();
         assert!((-REVERSE_MAX - 1.0..-100.0).contains(&v), "reverse {v}");
+    }
+
+    /// Keyboard steering is all or nothing, so holding a line at speed means
+    /// tapping left and right; that alone must never throw the car into a drift.
+    #[test]
+    fn quick_steering_corrections_do_not_start_a_drift() {
+        let mut car = CarState::new(Vec2::ZERO, 0.0);
+        run(&mut car, full_throttle(), 4.0, &Flat(Surface::Road));
+        assert!(car.speed() > 300.0, "speed {}", car.speed());
+        for (i, tap) in [0.08, 0.12, 0.2, 0.3, 0.1, 0.15, 0.25, 0.05].iter().cycle().take(24).enumerate() {
+            let steer = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let ev = run(&mut car, CarInput { throttle: 1.0, steer, ..Default::default() }, *tap, &Flat(Surface::Road));
+            assert!(!ev.drift_started, "tap {i} ({tap} s) started a drift");
+        }
+        assert!(!car.drifting);
     }
 
     #[test]
