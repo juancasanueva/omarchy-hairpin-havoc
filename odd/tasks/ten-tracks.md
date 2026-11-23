@@ -52,6 +52,7 @@ Created 2026-11-23.
 - Pre-existing, not changed: a surface query past a branch end reads as road along the branch
   tangent (no lengthwise clamp), so a thin strip beyond some branch ends is drivable. Seen on
   the original tracks too.
+- Gentle AI review (reliability lens, user granted): approved with no findings, acknowledged.
 
 ## Next step
 T4 user play-test.
