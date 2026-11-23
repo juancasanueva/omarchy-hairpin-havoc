@@ -1,4 +1,4 @@
-//! The five original circuits. Control points are listed in driving order;
+//! The ten circuits. Control points are listed in driving order;
 //! the start/finish line sits at control point 0.
 
 use super::track::{BranchDef, BranchKind, ControlPoint, Track, cp};
@@ -10,16 +10,26 @@ pub enum TrackId {
     NeonDocks,
     GlacierPass,
     EmberOval,
+    MapleLoop,
+    SaltFlats,
+    IronHarbor,
+    AuroraRidge,
+    JungleTwist,
 }
 
 impl TrackId {
     /// Saves and ghost codes store positions in this list: only ever append.
-    pub const ALL: [TrackId; 5] = [
+    pub const ALL: [TrackId; 10] = [
         TrackId::OrchardRing,
         TrackId::DuneSprint,
         TrackId::NeonDocks,
         TrackId::GlacierPass,
         TrackId::EmberOval,
+        TrackId::MapleLoop,
+        TrackId::SaltFlats,
+        TrackId::IronHarbor,
+        TrackId::AuroraRidge,
+        TrackId::JungleTwist,
     ];
 
     pub fn index(self) -> usize {
@@ -33,6 +43,11 @@ impl TrackId {
             TrackId::NeonDocks => "neon-docks",
             TrackId::GlacierPass => "glacier-pass",
             TrackId::EmberOval => "ember-oval",
+            TrackId::MapleLoop => "maple-loop",
+            TrackId::SaltFlats => "salt-flats",
+            TrackId::IronHarbor => "iron-harbor",
+            TrackId::AuroraRidge => "aurora-ridge",
+            TrackId::JungleTwist => "jungle-twist",
         }
     }
 }
@@ -282,6 +297,210 @@ pub fn track_def(id: TrackId) -> TrackDef {
             ],
             box_stations: [0.06, 0.42, 0.70],
         },
+        TrackId::MapleLoop => TrackDef {
+            id,
+            name: "Maple Loop",
+            difficulty: Difficulty::Balanced,
+            main: vec![
+                cp(-1400.0, -950.0, 62.0),
+                cp(0.0, -1000.0, 64.0),
+                cp(1300.0, -950.0, 62.0),
+                cp(1900.0, -600.0, 58.0),
+                cp(2000.0, 0.0, 56.0),
+                cp(1700.0, 500.0, 56.0),
+                cp(1100.0, 600.0, 54.0),
+                cp(700.0, 300.0, 54.0),
+                cp(200.0, 350.0, 54.0),
+                cp(-100.0, 750.0, 56.0),
+                cp(300.0, 1150.0, 58.0),
+                cp(-300.0, 1450.0, 60.0),
+                cp(-1100.0, 1400.0, 60.0),
+                cp(-1700.0, 1000.0, 58.0),
+                cp(-1500.0, 450.0, 54.0),
+                cp(-1900.0, -100.0, 56.0),
+                cp(-1850.0, -650.0, 60.0),
+            ],
+            branches: vec![
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 6.0,
+                    to: 9.0,
+                    mids: vec![cp(500.0, 700.0, 34.0)],
+                },
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 2.5,
+                    to: 5.4,
+                    mids: vec![
+                        cp(2250.0, -500.0, 40.0),
+                        cp(2350.0, 150.0, 40.0),
+                        cp(2150.0, 650.0, 40.0),
+                    ],
+                },
+            ],
+            box_stations: [0.05, 0.38, 0.70],
+        },
+        TrackId::SaltFlats => TrackDef {
+            id,
+            name: "Salt Flats",
+            difficulty: Difficulty::Fast,
+            main: vec![
+                cp(-2100.0, -900.0, 68.0),
+                cp(-400.0, -1000.0, 70.0),
+                cp(1300.0, -950.0, 70.0),
+                cp(2200.0, -600.0, 66.0),
+                cp(2400.0, 100.0, 64.0),
+                cp(2000.0, 800.0, 64.0),
+                cp(1200.0, 1200.0, 66.0),
+                cp(300.0, 1250.0, 66.0),
+                cp(-500.0, 800.0, 64.0),
+                cp(-1300.0, 1200.0, 66.0),
+                cp(-2100.0, 900.0, 66.0),
+                cp(-2500.0, 200.0, 66.0),
+                cp(-2500.0, -500.0, 68.0),
+            ],
+            branches: vec![
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 7.0,
+                    to: 9.0,
+                    mids: vec![cp(-500.0, 1330.0, 36.0)],
+                },
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 3.0,
+                    to: 5.0,
+                    mids: vec![cp(2700.0, -400.0, 42.0), cp(2750.0, 400.0, 42.0)],
+                },
+            ],
+            box_stations: [0.06, 0.40, 0.72],
+        },
+        TrackId::IronHarbor => TrackDef {
+            id,
+            name: "Iron Harbor",
+            difficulty: Difficulty::Technical,
+            main: vec![
+                cp(-1500.0, -900.0, 56.0),
+                cp(300.0, -900.0, 58.0),
+                cp(900.0, -700.0, 52.0),
+                cp(1000.0, -200.0, 52.0),
+                cp(600.0, 100.0, 52.0),
+                cp(700.0, 500.0, 52.0),
+                cp(1300.0, 600.0, 52.0),
+                cp(1700.0, 1000.0, 52.0),
+                cp(1400.0, 1400.0, 54.0),
+                cp(700.0, 1350.0, 54.0),
+                cp(300.0, 900.0, 52.0),
+                cp(-300.0, 1300.0, 52.0),
+                cp(-1000.0, 1300.0, 54.0),
+                cp(-1200.0, 800.0, 52.0),
+                cp(-700.0, 500.0, 52.0),
+                cp(-900.0, 0.0, 52.0),
+                cp(-1600.0, -100.0, 54.0),
+                cp(-1900.0, -500.0, 56.0),
+            ],
+            branches: vec![
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 6.7,
+                    to: 8.6,
+                    mids: vec![cp(1350.0, 1100.0, 32.0)],
+                },
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 11.0,
+                    to: 13.0,
+                    mids: vec![
+                        cp(-650.0, 1600.0, 40.0),
+                        cp(-1400.0, 1500.0, 40.0),
+                        cp(-1550.0, 1050.0, 40.0),
+                    ],
+                },
+            ],
+            box_stations: [0.05, 0.36, 0.68],
+        },
+        TrackId::AuroraRidge => TrackDef {
+            id,
+            name: "Aurora Ridge",
+            difficulty: Difficulty::Balanced,
+            main: vec![
+                cp(-1500.0, -1000.0, 62.0),
+                cp(100.0, -1000.0, 64.0),
+                cp(1200.0, -900.0, 60.0),
+                cp(1800.0, -400.0, 58.0),
+                cp(1350.0, 100.0, 56.0),
+                cp(1900.0, 600.0, 56.0),
+                cp(1600.0, 1200.0, 58.0),
+                cp(800.0, 1300.0, 58.0),
+                cp(300.0, 900.0, 56.0),
+                cp(-300.0, 1300.0, 56.0),
+                cp(-1100.0, 1350.0, 58.0),
+                cp(-1800.0, 900.0, 58.0),
+                cp(-1900.0, 200.0, 56.0),
+                cp(-1300.0, -200.0, 56.0),
+                cp(-2000.0, -600.0, 58.0),
+            ],
+            branches: vec![
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 7.0,
+                    to: 9.0,
+                    mids: vec![cp(250.0, 1380.0, 34.0)],
+                },
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 2.6,
+                    to: 5.6,
+                    mids: vec![
+                        cp(2200.0, -650.0, 40.0),
+                        cp(2500.0, -50.0, 40.0),
+                        cp(2450.0, 600.0, 40.0),
+                        cp(2050.0, 1000.0, 40.0),
+                    ],
+                },
+            ],
+            box_stations: [0.05, 0.37, 0.69],
+        },
+        TrackId::JungleTwist => TrackDef {
+            id,
+            name: "Jungle Twist",
+            difficulty: Difficulty::Technical,
+            main: vec![
+                cp(-1600.0, -900.0, 56.0),
+                cp(0.0, -900.0, 58.0),
+                cp(800.0, -1000.0, 54.0),
+                cp(1400.0, -700.0, 52.0),
+                cp(1200.0, -200.0, 52.0),
+                cp(1700.0, 200.0, 52.0),
+                cp(1500.0, 700.0, 52.0),
+                cp(900.0, 600.0, 52.0),
+                cp(600.0, 1000.0, 52.0),
+                cp(1000.0, 1400.0, 54.0),
+                cp(300.0, 1600.0, 54.0),
+                cp(-400.0, 1300.0, 52.0),
+                cp(-300.0, 800.0, 52.0),
+                cp(-800.0, 500.0, 52.0),
+                cp(-1400.0, 900.0, 54.0),
+                cp(-1900.0, 500.0, 54.0),
+                cp(-1500.0, 0.0, 52.0),
+                cp(-2000.0, -500.0, 54.0),
+            ],
+            branches: vec![
+                BranchDef {
+                    kind: BranchKind::Shortcut,
+                    from: 12.0,
+                    to: 14.0,
+                    mids: vec![cp(-850.0, 880.0, 32.0)],
+                },
+                BranchDef {
+                    kind: BranchKind::BoostLane,
+                    from: 3.0,
+                    to: 5.5,
+                    mids: vec![cp(1950.0, -600.0, 40.0), cp(2250.0, 0.0, 40.0)],
+                },
+            ],
+            box_stations: [0.05, 0.37, 0.69],
+        },
     }
 }
 
@@ -344,7 +563,21 @@ mod tests {
     #[test]
     fn track_order_is_stable() {
         let keys = TrackId::ALL.map(TrackId::key);
-        assert_eq!(keys, ["orchard-ring", "dune-sprint", "neon-docks", "glacier-pass", "ember-oval"]);
+        assert_eq!(
+            keys,
+            [
+                "orchard-ring",
+                "dune-sprint",
+                "neon-docks",
+                "glacier-pass",
+                "ember-oval",
+                "maple-loop",
+                "salt-flats",
+                "iron-harbor",
+                "aurora-ridge",
+                "jungle-twist",
+            ]
+        );
     }
 
     /// Surface queries find the road from two 96 px grid cells away.
