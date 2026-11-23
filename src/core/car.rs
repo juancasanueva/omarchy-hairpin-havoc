@@ -58,14 +58,16 @@ const WHEELBASE: f32 = 42.0;
 const MAX_STEER: f32 = 0.55;
 /// Fraction of `MAX_STEER` used by the bicycle model; lower = gentler turning.
 const STEER_GAIN: f32 = 0.45;
-/// Response curve from wheel position to front-wheel angle: part lock turns
-/// less than its share, full lock is unchanged. Keyboard taps only reach part
-/// lock, so this keeps them small corrections.
-const STEER_CURVE: f32 = 1.7;
+/// Keyboard response curve from wheel position to front-wheel angle: part lock
+/// turns less than its share, full lock is unchanged. Key taps only reach part
+/// lock, so this keeps them small corrections. Analog steering (the AI) stays linear.
+const KEY_STEER_CURVE: f32 = 1.7;
 /// Steering wheel speeds (per second): building lock, returning to centre, countersteering.
 /// Keyboard input is all-or-nothing, so a slow build lets taps give partial lock.
 const STEER_RATE_IN: f32 = 5.0;
-const STEER_RATE_CENTER: f32 = 14.0;
+const STEER_RATE_CENTER: f32 = 9.0;
+/// Keys straighten the wheel faster on release, so a tap ends cleanly.
+const KEY_STEER_RATE_CENTER: f32 = 14.0;
 const STEER_RATE_COUNTER: f32 = 14.0;
 /// Remaining steering at top speed (1.0 = no reduction).
 const STEER_AT_TOP_SPEED: f32 = 0.55;
@@ -87,6 +89,9 @@ pub struct CarInput {
     pub steer: f32,
     pub handbrake: bool,
     pub nitro: bool,
+    /// `steer` comes from all-or-nothing keys (the player), not analog control
+    /// (the AI): taps get the gentler keyboard response.
+    pub keys: bool,
 }
 
 /// Effects on how one car drives, mostly temporary and granted by gadgets.
@@ -386,7 +391,7 @@ pub fn step(
     // Steering with asymmetric rates.
     let target = if spinning { 0.0 } else { shape_steer(input.steer) };
     let rate = if target == 0.0 {
-        STEER_RATE_CENTER
+        if input.keys { KEY_STEER_RATE_CENTER } else { STEER_RATE_CENTER }
     } else if target.signum() != car.steer.signum() && car.steer != 0.0 {
         STEER_RATE_COUNTER
     } else {
@@ -568,7 +573,8 @@ pub fn step(
         } else {
             1.0 - (1.0 - STEER_AT_TOP_SPEED) * ((speed - 260.0) / (465.0 - 260.0)).min(1.0)
         };
-        let angle = car.steer.signum() * car.steer.abs().powf(STEER_CURVE) * MAX_STEER * STEER_GAIN;
+        let curve = if input.keys { KEY_STEER_CURVE } else { 1.0 };
+        let angle = car.steer.signum() * car.steer.abs().powf(curve) * MAX_STEER * STEER_GAIN;
         let mut target_yaw = vf * angle.tan() / WHEELBASE * sf;
         if car.drifting {
             target_yaw *= 1.0 + 0.45 * tuning.drift_control_mul;
@@ -757,15 +763,15 @@ mod tests {
         assert!(car.speed() > 300.0, "speed {}", car.speed());
         for (i, tap) in [0.08, 0.12, 0.2, 0.3, 0.1, 0.15, 0.25, 0.05].iter().cycle().take(24).enumerate() {
             let steer = if i % 2 == 0 { 1.0 } else { -1.0 };
-            let ev = run(&mut car, CarInput { throttle: 1.0, steer, ..Default::default() }, *tap, &Flat(Surface::Road));
+            let ev = run(&mut car, CarInput { throttle: 1.0, steer, keys: true, ..Default::default() }, *tap, &Flat(Surface::Road));
             assert!(!ev.drift_started, "tap {i} ({tap} s) started a drift");
         }
         assert!(!car.drifting);
     }
 
     /// Heading change, in degrees, from holding full lock for `secs` at a steady
-    /// `speed` and then letting go.
-    fn tap_turn(speed: f32, secs: f32) -> f32 {
+    /// `speed` and then letting go, with keys or with analog (AI) steering.
+    fn tap_turn(speed: f32, secs: f32, keys: bool) -> f32 {
         let mut car = CarState::new(Vec2::ZERO, 0.0);
         car.vel = Vec2::new(speed, 0.0);
         car.gear = 4;
@@ -773,7 +779,7 @@ mod tests {
         while t < secs + 1.0 {
             let steer = if t < secs { 1.0 } else { 0.0 };
             let throttle = if car.speed() < speed { 1.0 } else { 0.0 };
-            step(&mut car, CarInput { throttle, steer, ..Default::default() }, &CarTuning::default(), CarModifiers::default(), &Flat(Surface::Road));
+            step(&mut car, CarInput { throttle, steer, keys, ..Default::default() }, &CarTuning::default(), CarModifiers::default(), &Flat(Surface::Road));
             t += DT;
         }
         angle_between(car.heading, 0.0).to_degrees()
@@ -782,10 +788,20 @@ mod tests {
     /// A quick key tap is a small correction; holding the key still turns hard.
     #[test]
     fn a_key_tap_nudges_and_a_hold_turns() {
-        let tap = tap_turn(300.0, 0.15);
-        let hold = tap_turn(300.0, 0.5);
+        let tap = tap_turn(300.0, 0.15, true);
+        let hold = tap_turn(300.0, 0.5, true);
         assert!(tap > 1.0 && tap < 6.0, "0.15 s tap turned {tap:.1} degrees");
         assert!(hold > 30.0, "0.5 s hold turned {hold:.1} degrees");
+    }
+
+    /// The gentler keyboard response is for the player only: analog steering,
+    /// as the AI drives, keeps its full partial-lock response.
+    #[test]
+    fn analog_steering_keeps_the_linear_response() {
+        let keys = tap_turn(300.0, 0.15, true);
+        let analog = tap_turn(300.0, 0.15, false);
+        assert!(analog > 7.0, "analog 0.15 s turned {analog:.1} degrees");
+        assert!(analog > keys * 1.5, "analog {analog:.1} vs keys {keys:.1}");
     }
 
     #[test]

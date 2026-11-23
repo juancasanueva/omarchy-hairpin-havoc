@@ -283,6 +283,7 @@ fn player_input(
         steer,
         handbrake: held(Action::Drift),
         nitro: held(Action::Nitro),
+        keys: true,
     };
     let racing = session.phase == Phase::Running;
     for mut r in &mut racers {
