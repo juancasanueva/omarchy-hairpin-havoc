@@ -46,11 +46,12 @@ impl Plugin for TitlePlugin {
     }
 }
 
-/// Development aid: `HAIRPIN_AUTOSTART=race|trial|tracks|garage|about|settings` skips the main menu.
+/// Development aid: `HAIRPIN_AUTOSTART=race|trial|tracks|garage|scores|about|settings` skips the main menu.
 fn dev_autostart(mut mode: ResMut<RaceMode>, mut next: ResMut<NextState<AppState>>) {
     match std::env::var("HAIRPIN_AUTOSTART").as_deref() {
         Ok("tracks") => next.set(AppState::TrackSelect),
         Ok("garage") => next.set(AppState::Garage),
+        Ok("scores") => next.set(AppState::HighScores),
         Ok("about") => next.set(AppState::About),
         Ok("settings") => next.set(AppState::Settings),
         Ok("race") => {
@@ -81,15 +82,17 @@ pub fn wrap_index(index: usize, delta: i32, len: usize) -> usize {
 enum MenuItem {
     Play,
     Garage,
+    HighScores,
     Settings,
     About,
     Quit,
 }
 
 impl MenuItem {
-    const ALL: [MenuItem; 5] = [
+    const ALL: [MenuItem; 6] = [
         MenuItem::Play,
         MenuItem::Garage,
+        MenuItem::HighScores,
         MenuItem::Settings,
         MenuItem::About,
         MenuItem::Quit,
@@ -99,6 +102,7 @@ impl MenuItem {
         match self {
             MenuItem::Play => "PLAY",
             MenuItem::Garage => "GARAGE",
+            MenuItem::HighScores => "HIGH SCORES",
             MenuItem::Settings => "SETTINGS",
             MenuItem::About => "ABOUT",
             MenuItem::Quit => "QUIT",
@@ -110,6 +114,7 @@ impl MenuItem {
         match self {
             MenuItem::Play => KeyCode::KeyP,
             MenuItem::Garage => KeyCode::KeyG,
+            MenuItem::HighScores => KeyCode::KeyH,
             MenuItem::Settings => KeyCode::KeyO,
             MenuItem::About => KeyCode::KeyI,
             MenuItem::Quit => KeyCode::Escape,
@@ -121,6 +126,7 @@ impl MenuItem {
         match self {
             MenuItem::Play => "[P]",
             MenuItem::Garage => "[G]",
+            MenuItem::HighScores => "[H]",
             MenuItem::Settings => "[O]",
             MenuItem::About => "[I]",
             MenuItem::Quit => "[ESC]",
@@ -132,6 +138,7 @@ impl MenuItem {
         match self {
             MenuItem::Play => Some(AppState::TrackSelect),
             MenuItem::Garage => Some(AppState::Garage),
+            MenuItem::HighScores => Some(AppState::HighScores),
             MenuItem::Settings => Some(AppState::Settings),
             MenuItem::About => Some(AppState::About),
             MenuItem::Quit => None,
@@ -366,7 +373,7 @@ mod tests {
     #[test]
     fn entries_are_in_menu_order() {
         let labels = MenuItem::ALL.map(MenuItem::label);
-        assert_eq!(labels, ["PLAY", "GARAGE", "SETTINGS", "ABOUT", "QUIT"]);
+        assert_eq!(labels, ["PLAY", "GARAGE", "HIGH SCORES", "SETTINGS", "ABOUT", "QUIT"]);
     }
 
     #[test]
@@ -411,6 +418,7 @@ mod tests {
         let screens = [
             Some(AppState::TrackSelect),
             Some(AppState::Garage),
+            Some(AppState::HighScores),
             Some(AppState::Settings),
             Some(AppState::About),
             None,

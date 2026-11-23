@@ -60,7 +60,7 @@ Requirements: Rust (stable, only to build from source), Vulkan drivers, `alsa-li
 
 ## Controls
 
-The game opens on a main menu: Play (`P`), Garage (`G`), Settings (`O`), About (`I`) and Quit (`Esc`).
+The game opens on a main menu: Play (`P`), Garage (`G`), High Scores (`H`), Settings (`O`), About (`I`) and Quit (`Esc`).
 Move with `↑` `↓` or `W` `S` and press `Enter`, or use the shortcut. Play opens track select.
 
 Driving keys are the defaults; rebind them in Settings.
@@ -92,6 +92,7 @@ Driving keys are the defaults; rebind them in Settings.
 | Gadgets | Thumper, Slick, Static Burst, Battering Boost, All-Terrain, Phantom, Drift Surge. |
 | Garage | Earn credits by placing, drifting and setting PBs; buy cars, upgrades, paints, gadgets. |
 | Time Trial | Your best lap is saved as a ghost; share it as an `HH1:` code. |
+| High Scores | Two views per track: best lap, and best race finish (position, then race time). Switch with `←` `→`. |
 
 ## Details
 

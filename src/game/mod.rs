@@ -7,6 +7,7 @@ pub mod controls;
 pub mod flame;
 pub mod fx;
 pub mod garage;
+pub mod high_scores;
 pub mod hud;
 pub mod items;
 pub mod meshes;
@@ -41,6 +42,7 @@ pub enum AppState {
     Results,
     About,
     Settings,
+    HighScores,
 }
 
 /// Which mode the next race runs in.
@@ -90,6 +92,7 @@ pub fn build_app() -> App {
         about::AboutPlugin,
         settings::SettingsPlugin,
         confirm::ConfirmPlugin,
+        high_scores::HighScoresPlugin,
     ));
     app
 }
