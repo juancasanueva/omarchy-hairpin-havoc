@@ -304,6 +304,19 @@ impl Path {
         }
         (best.1, best.2, best.3)
     }
+
+    /// Whether `p`, refined to segment `i` at `t`, lies beyond an open path's
+    /// ends. The lateral offset ignores that overshoot, so without this check
+    /// an invisible strip of road would run on past a branch end.
+    fn past_end(&self, p: Vec2, i: usize, t: f32) -> bool {
+        if self.closed {
+            return false;
+        }
+        let n = self.samples.len();
+        let (first, last) = (&self.samples[0], &self.samples[n - 1]);
+        (i == 0 && t <= 0.0 && (p - first.pos).dot(first.tangent) < 0.0)
+            || (i + 2 == n && t >= 1.0 && (p - last.pos).dot(last.tangent) > 0.0)
+    }
 }
 
 impl Track {
@@ -437,24 +450,34 @@ impl Track {
             nearest[0] = Some((0.0, nearest_index(&self.main, p)));
         }
 
-        let mut best: Option<(Surface, usize, usize, f32, f32, Vec2)> = None;
+        let mut best: Option<(Surface, usize, usize, f32, f32, Vec2, f32)> = None;
         for (pid, slot) in nearest.iter().enumerate() {
             let Some((_, hint)) = *slot else { continue };
             let path = self.path(pid);
             let (i, t, q) = path.refine(p, hint);
+            if path.past_end(p, i, t) {
+                // Branch ends meet the main loop, which covers this ground.
+                continue;
+            }
             let s = &path.samples[i];
             let lateral = s.normal.dot(p - q);
             let surface = path.surface(i, lateral);
             let local = s.distance + SAMPLE_SPACING * t;
+            // Inside every route's walls, the nearest wall pushes the car out.
+            let depth = if surface == Surface::Wall {
+                lateral.abs() - path.wall_offset(i, lateral > 0.0)
+            } else {
+                0.0
+            };
             let replace = match best {
                 None => true,
-                Some((bs, ..)) => surface < bs,
+                Some((bs, .., bd)) => surface < bs || (surface == bs && depth < bd),
             };
             if replace {
-                best = Some((surface, pid, i, lateral, local, s.tangent));
+                best = Some((surface, pid, i, lateral, local, s.tangent, depth));
             }
         }
-        let (surface, pid, i, lateral, local, tangent) = best.expect("main loop always queried");
+        let (surface, pid, i, lateral, local, tangent, _) = best.expect("main loop always queried");
 
         let progress = if pid == 0 {
             local.rem_euclid(self.main.length)
@@ -778,5 +801,91 @@ mod tests {
         let mut w = vec![true, true, false, false, true, true];
         drop_short_runs(&mut w, 4, true);
         assert_eq!(w, vec![true, true, false, false, true, true]);
+    }
+
+    /// True when `p` is inside the wall band of some centerline sample.
+    fn inside_walls(t: &Track, p: Vec2) -> bool {
+        t.paths().any(|path| {
+            path.samples.iter().enumerate().any(|(i, s)| {
+                let wall = path.wall_offset(i, true).max(path.wall_offset(i, false));
+                s.pos.distance(p) <= wall + SAMPLE_SPACING
+            })
+        })
+    }
+
+    /// Past a branch's open ends there is no hidden ground: points beyond the
+    /// walls are walls, and stepping from drivable ground into a wall meets it
+    /// at its surface, so the push never snaps the car back from far away.
+    #[test]
+    fn no_hidden_ground_past_branch_ends() {
+        use crate::core::tracks::{TrackId, track_def};
+        const STEP: f32 = 4.0;
+        // Runoff changes along a corner, so a wall can be met slightly deeper than one step.
+        const ENTRY_DEPTH: f32 = 3.0 * STEP;
+        for id in TrackId::ALL {
+            let t = track_def(id).build();
+            for (b, branch) in t.branches.iter().enumerate() {
+                let s = &branch.path.samples;
+                let ends = [(s[0].pos, -s[0].tangent), (s[s.len() - 1].pos, s[s.len() - 1].tangent)];
+                for (origin, out) in ends {
+                    // Fan out around the outward tangent, as a car leaving the end would.
+                    for deg in [-30.0f32, -15.0, 0.0, 15.0, 30.0] {
+                        let dir = Vec2::from_angle(deg.to_radians()).rotate(out);
+                        let mut was_drivable = true;
+                        for k in 0..100 {
+                            let p = origin + dir * STEP * k as f32;
+                            let q = t.query(p);
+                            assert!(
+                                q.surface == Surface::Wall || inside_walls(&t, p),
+                                "{id:?} branch {b}: {:?} beyond the walls at {p:?}",
+                                q.surface
+                            );
+                            if let Some((_, depth)) = q.wall_push
+                                && was_drivable
+                            {
+                                assert!(
+                                    depth <= ENTRY_DEPTH,
+                                    "{id:?} branch {b}: wall met {depth:.0} px deep at {p:?}"
+                                );
+                            }
+                            was_drivable = q.wall_push.is_none();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Hitting a branch's wall pushes the car back onto that branch, not
+    /// toward a far-away stretch of the main loop.
+    #[test]
+    fn branch_walls_push_back_onto_the_branch() {
+        use crate::core::tracks::{TrackId, track_def};
+        const STEP: f32 = 4.0;
+        const ENTRY_DEPTH: f32 = 3.0 * STEP;
+        for id in TrackId::ALL {
+            let t = track_def(id).build();
+            for (b, branch) in t.branches.iter().enumerate() {
+                let s = &branch.path.samples;
+                for i in (s.len() / 5..s.len() * 4 / 5).step_by(4) {
+                    for side in [1.0f32, -1.0] {
+                        let mut was_drivable = true;
+                        for k in 0..100 {
+                            let p = s[i].pos + s[i].normal * side * STEP * k as f32;
+                            let push = t.query(p).wall_push;
+                            if let Some((_, depth)) = push
+                                && was_drivable
+                            {
+                                assert!(
+                                    depth <= ENTRY_DEPTH,
+                                    "{id:?} branch {b} sample {i}: wall met {depth:.0} px deep at {p:?}"
+                                );
+                            }
+                            was_drivable = push.is_none();
+                        }
+                    }
+                }
+            }
+        }
     }
 }
